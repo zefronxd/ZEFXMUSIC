@@ -1,0 +1,42 @@
+modules = ["python-3.10", "bash", "nix"]
+
+[nix]
+channel = "stable-25_05"
+packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "zlib"]
+
+[agent]
+expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "uv run --python 3.10 python3 -m zefron"
+
+[userenv]
+
+[userenv.shared]
+ONEGRAB_API_KEY = "4f7c3a_jTyyRH8d0901mVRCL9363aeHkVERtycg"
+LASTFM_API_KEY = "d983c47914d76833e419d2dd8fdcf4ce"
+LASTFM_SHARED_SECRET = "b76e8a96fb70385fd2e024a0ac21dbb2"
+DURATION_LIMIT = "180"
+LASTFM_API_KEY_2 = "557160c9e176a2d56f5fc66278e88927"
+LASTFM_SHARED_SECRET_2 = "44805e4f0c2083b83a987d7e877a3483"
+BOT_TOKEN = "8917394333:AAHgWANecWU3tVNMHddD1QDrZhuOIcAO-nU"

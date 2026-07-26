@@ -1,0 +1,78 @@
+from os import getenv
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    def __init__(self):
+        self.API_ID = int(getenv("API_ID", 0))
+        self.API_HASH = getenv("API_HASH")
+
+        self.BOT_TOKEN = getenv("BOT_TOKEN") or getenv("TOKEN")
+        self.MONGO_URL = getenv("MONGO_URL") or getenv("MONGO_URI")
+
+        self.LOGGER_ID = int(getenv("LOGGER_ID", 0))
+        self.OWNER_ID = int(getenv("OWNER_ID", 0))
+
+        self.DURATION_LIMIT = int(getenv("DURATION_LIMIT") or getenv("SONG_DURATION_LIMIT", 60)) * 60
+        self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", 20))
+        self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", 20))
+
+        self.SESSION1 = getenv("SESSION") or getenv("STRING1") or None
+        self.SESSION2 = getenv("SESSION2", None)
+        self.SESSION3 = getenv("SESSION3", None)
+
+        self.SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/zefron_musicworld")
+        self.SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+urALmsBSdB9hYWE5")
+
+        self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", "False").lower() == "true"
+        self.AUTO_END: bool = getenv("AUTO_END", "False").lower() == "true"
+    
+        self.THUMB_GEN: bool = getenv("THUMB_GEN", "True").lower() == "true"
+        self.VIDEO_PLAY: bool = getenv("VIDEO_PLAY", "True").lower() == "true"
+
+        self.LANG_CODE = getenv("LANG_CODE", "en")
+
+        self.ONEGRAB_API_KEY = getenv("ONEGRAB_API_KEY")
+
+        self.LASTFM_API_KEY = getenv("LASTFM_API_KEY", "d983c47914d76833e419d2dd8fdcf4ce")
+        self.LASTFM_SHARED_SECRET = getenv("LASTFM_SHARED_SECRET", "b76e8a96fb70385fd2e024a0ac21dbb2")
+        self.LASTFM_API_KEY_2 = "557160c9e176a2d56f5fc66278e88927"
+        self.LASTFM_SHARED_SECRET_2 = "44805e4f0c2083b83a987d7e877a3483"
+
+        self.COOKIES_URL = [
+            url for url in getenv("COOKIES_URL", "").split(" ")
+            if url and "batbin.me" in url
+        ]
+        self.DEFAULT_THUMB = getenv("DEFAULT_THUMB", "https://te.legra.ph/file/3e40a408286d4eda24191.jpg")
+        self.PING_IMG = getenv("PING_IMG", "https://d.uguu.se/UBQqgQsK.jpg")
+        self._primary_start_img = "https://d.uguu.se/UBQqgQsK.jpg"
+        _start_imgs = [
+            "https://files.catbox.moe/x5lytj.jpg",
+            "https://files.catbox.moe/psya34.jpg",
+            "https://files.catbox.moe/leaexg.jpg",
+            "https://files.catbox.moe/b0e4vk.jpg",
+            "https://files.catbox.moe/1b1wap.jpg",
+            "https://files.catbox.moe/ommjjk.jpg",
+            "https://files.catbox.moe/onurxm.jpg",
+            "https://files.catbox.moe/97v75k.jpg",
+            "https://files.catbox.moe/t833zy.jpg",
+            "https://files.catbox.moe/472piq.jpg",
+            "https://files.catbox.moe/qwjeyk.jpg",
+            "https://files.catbox.moe/t0hopv.jpg",
+            "https://files.catbox.moe/u5ux0j.jpg",
+            "https://files.catbox.moe/h1yk4w.jpg",
+            "https://files.catbox.moe/gl5rg8.jpg",
+        ]
+        from random import choice as _choice
+        self.START_IMG = getenv("START_IMG") or _choice(_start_imgs)
+        self._start_imgs = _start_imgs  # kept for per-request random picks
+
+    def check(self):
+        missing = [
+            var
+            for var in ["API_ID", "API_HASH", "BOT_TOKEN", "MONGO_URL", "LOGGER_ID", "OWNER_ID", "SESSION1"]
+            if not getattr(self, var)
+        ]
+        if missing:
+            raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
