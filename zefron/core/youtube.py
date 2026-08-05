@@ -122,64 +122,24 @@ def _cleanup_wav_cache(keep: int = 25) -> None:
 YOUTUBEAPI_BASE = "https://youtubeapi-dbju.onrender.com"
 
 
-async def _youtubeapi_download_audio(video_id: str) -> str | None:
-    """Download audio via youtubeapi-dbju.onrender.com, pre-convert to WAV."""
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-    wav_path = _wav_path(mp3_path)
-
-    # Return cached WAV immediately
-    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
-        return wav_path
-
-    # Download if not cached
-    if not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
-        url = f"{YOUTUBEAPI_BASE}/api/media"
-        params = {
-            "url":     f"https://youtu.be/{video_id}",
-            "type":    "audio",
-            "quality": "360",
-        }
-        tmp_dl = mp3_path + ".ytapi.dl"
-        downloaded = False
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=300),
-                ) as resp:
-                    if resp.status != 200:
-                        logger.warning(
-                            "YoutubeAPI audio %s → HTTP %s", video_id, resp.status
-                        )
-                    else:
-                        with open(tmp_dl, "wb") as f:
-                            async for chunk in resp.content.iter_chunked(131072):
-                                f.write(chunk)
-                        if os.path.exists(tmp_dl) and os.path.getsize(tmp_dl) > 0:
-                            os.replace(tmp_dl, mp3_path)
-                            downloaded = True
-        except Exception as e:
-            logger.warning("YoutubeAPI audio %s failed: %s", video_id, e)
-        finally:
-            if os.path.exists(tmp_dl):
-                try:
-                    os.remove(tmp_dl)
-                except Exception:
-                    pass
-
-        if not downloaded or not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
-            return None
-
-    # Pre-convert to WAV
-    result = await _convert_to_wav(mp3_path)
-
-    # Background cache housekeeping
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _cleanup_wav_cache, 25)
-
-    return result
+async def _youtubeapi_direct_url(video_id: str) -> str | None:
+    """Return a direct streaming URL from youtubeapi-dbju — no file download."""
+    url = (
+        f"{YOUTUBEAPI_BASE}/api/media"
+        f"?url=https://youtu.be/{video_id}&type=audio&quality=360"
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(
+                url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True
+            ) as resp:
+                if resp.status == 200:
+                    logger.info("YoutubeAPI direct stream ready: %s", video_id)
+                    return url
+                logger.warning("YoutubeAPI HEAD %s → HTTP %s", video_id, resp.status)
+    except Exception as e:
+        logger.warning("YoutubeAPI HEAD check failed for %s: %s", video_id, e)
+    return None
 
 
 # ── ShrutiAPI download helpers ─────────────────────────────────────────────
@@ -451,13 +411,12 @@ class YouTube:
     # ── Download ───────────────────────────────────────────────────────────
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
-        # ── Audio: YoutubeAPI → ShrutiAPI → yt-dlp ────────────────────────
+        # ── Audio: YoutubeAPI direct stream → ShrutiAPI → yt-dlp ──────────
         if not video:
-            result = await _youtubeapi_download_audio(video_id)
+            result = await _youtubeapi_direct_url(video_id)
             if result:
-                logger.info("YoutubeAPI audio ready: %s", result)
                 return result
-            logger.warning("YoutubeAPI audio failed for %s, trying ShrutiAPI", video_id)
+            logger.warning("YoutubeAPI direct stream failed for %s, trying ShrutiAPI", video_id)
             result = await _shruti_download_audio(video_id)
             if result:
                 logger.info("ShrutiAPI audio ready: %s", result)
