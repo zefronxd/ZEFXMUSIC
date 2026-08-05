@@ -119,11 +119,11 @@ def _cleanup_wav_cache(keep: int = 25) -> None:
 
 
 # ── YoutubeAPI (primary audio source) ─────────────────────────────────────
-YOUTUBEAPI_BASE = "https://youtubeapi-kgg5.onrender.com"
+YOUTUBEAPI_BASE = "https://youtubeapi-dbju.onrender.com"
 
 
 async def _youtubeapi_download_audio(video_id: str) -> str | None:
-    """Download audio via youtubeapi-kgg5.onrender.com, pre-convert to WAV."""
+    """Download audio via youtubeapi-dbju.onrender.com, pre-convert to WAV."""
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
     wav_path = _wav_path(mp3_path)
