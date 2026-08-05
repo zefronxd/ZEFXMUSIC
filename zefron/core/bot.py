@@ -4,9 +4,37 @@
 
 
 import pyrogram
-
+import os
+import time
+import asyncio
 from zefron import config, logger
+from zefron.core.database import init_db_pool
 
+async def auto_clean_downloads():
+    """Background task jo har ghante purane downloaded songs ko delete karta hai okei zefron beta."""
+    while True:
+        try:
+            downloads_dir = "downloads"
+            age_limit = 7200 
+            current_time = time.time()
+            
+            if os.path.exists(downloads_dir):
+                count = 0
+                for file in os.listdir(downloads_dir):
+                    file_path = os.path.join(downloads_dir, file)
+                    if os.path.isfile(file_path):
+                        if (current_time - os.path.getctime(file_path)) > age_limit:
+                            os.remove(file_path)
+                            count += 1
+                
+                if count > 0:
+                    from zefron import logger
+                    logger.info(f"🧹 Storage Saver: Automatically deleted {count} old downloaded songs.")
+        except Exception as e:
+            from zefron import logger
+            logger.error(f"Cleanup Error: {e}")
+        
+        await asyncio.sleep(3600)
 
 class Bot(pyrogram.Client):
     def __init__(self):
@@ -31,6 +59,9 @@ class Bot(pyrogram.Client):
         Raises:
             SystemExit: If the bot fails to access the log group or is not an administrator in the logger group.
         """
+
+        asyncio.create_task(auto_clean_downloads())
+        await init_db_pool()
         await super().start()
         self.id = self.me.id
         self.name = self.me.first_name

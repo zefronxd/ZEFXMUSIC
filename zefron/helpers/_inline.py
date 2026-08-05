@@ -47,9 +47,9 @@ class Inline:
                 self.ikb(text="⏭", callback_data=f"controls skip {chat_id}", style=enums.ButtonStyle.PRIMARY),
                 self.ikb(text="⏹", callback_data=f"controls stop {chat_id}", style=enums.ButtonStyle.DANGER),
             ])
-            ap_text  = "🔁 Auto ✓" if autoplay_on else "🔁 Auto"
+            ap_text  = "🔁 ᴀᴜᴛᴏ ✓" if autoplay_on else "🔁 ᴀᴜᴛᴏ"
             ap_style = enums.ButtonStyle.SUCCESS if autoplay_on else enums.ButtonStyle.PRIMARY
-            fav_text  = "✦ Fav" if is_faved else "Fav"
+            fav_text  = "✦ ꜰᴀᴠ" if is_faved else "ꜰᴀᴠ"
             fav_style = enums.ButtonStyle.DANGER
             row = [
                 self.ikb(text="Suggest", callback_data=f"rec_show {chat_id}", style=enums.ButtonStyle.PRIMARY),
@@ -110,7 +110,7 @@ class Inline:
                 style=enums.ButtonStyle.SUCCESS,
             ),
             self.ikb(
-                text="❤️ Add to Fav",
+                text="☘️ ᴀᴅᴅ ᴛᴏ ꜰᴀᴠ",
                 callback_data=f"fav_queue {chat_id} {item_id}",
                 style=enums.ButtonStyle.DANGER,
             ),
@@ -123,8 +123,8 @@ class Inline:
         _style = enums.ButtonStyle.PRIMARY if playing else enums.ButtonStyle.SUCCESS
         return self.ikm([
             [
-                self.ikb(text="▶ Play Now", callback_data=f"controls resume {chat_id} q", style=enums.ButtonStyle.SUCCESS),
-                self.ikb(text="Add to Fav", callback_data=f"fav_toggle {chat_id}", style=enums.ButtonStyle.DANGER),
+                self.ikb(text="▶ ᴘʟᴀʏ ɴᴏᴡ ", callback_data=f"controls resume {chat_id} q", style=enums.ButtonStyle.SUCCESS),
+                self.ikb(text="☘️ ᴀᴅᴅ ᴛᴏ ꜰᴀᴠ", callback_data=f"fav_toggle {chat_id}", style=enums.ButtonStyle.DANGER),
             ],
             [
                 self.ikb(text=_text, callback_data=f"controls {_action} {chat_id} q", style=_style)
@@ -167,8 +167,8 @@ class Inline:
         rows = [
             [
                 self.ikb(
-                    text=lang["add_me"],
-                    url=f"https://t.me/{app.username}?startgroup=true",
+                    text="⌾ ᴄʜᴧᴛ ᴡɪᴛʜ ϻє ⌾",
+                    callback_data="chat_with_me_btn",
                     style=enums.ButtonStyle.SUCCESS,
                 )
             ],
@@ -183,6 +183,14 @@ class Inline:
                     url="https://t.me/II_ALONE_III",
                     style=enums.ButtonStyle.DANGER,
                 ),
+            ],
+            # Add me to group button sabse niche
+            [
+                self.ikb(
+                    text=lang["add_me"],
+                    url=f"https://t.me/{app.username}?startgroup=true",
+                    style=enums.ButtonStyle.SUCCESS,
+                )
             ],
         ]
         if not private:

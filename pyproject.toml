@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 
 dependencies = [
     "aiohttp~=3.14.1",
+    "asyncpg>=0.31.0",
     "kurigram>=2.2.21",
     "pillow~=12.2.0",
     "psutil~=7.2.2",
@@ -15,5 +16,6 @@ dependencies = [
     "pymongo>=4.16.0",
     "pytgcrypto>=1.2.11",
     "python-dotenv~=1.2.1",
+    "pytz>=2026.3.post1",
     "yt-dlp[default]>=2026.3.17",
 ]
