@@ -11,17 +11,24 @@ from zefron import zefx, app, db, lang, queue
 from zefron.helpers import Media
 
 
-# Verified working stations (audio/mpeg, 200 OK)
+# Verified working stations (200 OK)
 RADIO_STATIONS: dict[str, str] = {
+    # ── Hindi / Bollywood ──────────────────────────────────────────────────
+    "bollywood":   "https://drive.uber.radio/uber/bollywoodnow/icecast.audio",
+    "hindi":       "https://azuracast.vibesounds.in:8010/radio.mp3",
+    "mirchi":      "http://162.244.80.118:9460/stream.mp3",
+    "love":        "https://nl4.mystreaming.net/uber/bollywoodlove/icecast.audio",
+    "90s":         "https://2.mystreaming.net/uber/bollywood2000s/icecast.audio",
+    "2000s":       "https://2.mystreaming.net/uber/bollywood2000s/icecast.audio",
+    "2010s":       "https://drive.uber.radio/uber/bollywood2010s/icecast.audio",
+    "desi":        "https://streamer.radio.co/se30891e37/listen",
+    "air":         "http://air.pc.cdn.bitgravity.com/air/live/pbaudio001/chunklist.m3u8",
+    # ── International ─────────────────────────────────────────────────────
     "lofi":        "http://ice1.somafm.com/groovesalad-128-mp3",
     "chill":       "http://ice1.somafm.com/groovesalad-128-mp3",
-    "beats":       "http://ice1.somafm.com/beatblender-128-mp3",
-    "jazz":        "http://ice1.somafm.com/folkfwd-128-mp3",
     "rock":        "http://ice1.somafm.com/metal-128-mp3",
     "metal":       "http://ice1.somafm.com/metal-128-mp3",
-    "space":       "http://ice1.somafm.com/deepspaceone-128-mp3",
-    "edm":         "http://ice1.somafm.com/beatblender-128-mp3",
-    "indie":       "http://ice1.somafm.com/folkfwd-128-mp3",
+    "beats":       "http://ice1.somafm.com/beatblender-128-mp3",
     "ambient":     "http://ice1.somafm.com/deepspaceone-128-mp3",
 }
 
