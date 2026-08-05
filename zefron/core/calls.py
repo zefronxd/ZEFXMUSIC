@@ -62,6 +62,14 @@ class TgCall(PyTgCalls):
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
             return await self.play_next(chat_id)
 
+        is_radio = getattr(media, "duration", "") == "∞"
+        if is_radio:
+            _ffmpeg = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+        elif seek_time > 1:
+            _ffmpeg = f"-ss {seek_time}"
+        else:
+            _ffmpeg = None
+
         stream = types.MediaStream(
             media_path=media.file_path,
             audio_parameters=types.AudioQuality.HIGH,
@@ -72,7 +80,7 @@ class TgCall(PyTgCalls):
                 if media.video
                 else types.MediaStream.Flags.IGNORE
             ),
-            ffmpeg_parameters=f"-ss {seek_time}" if seek_time > 1 else None,
+            ffmpeg_parameters=_ffmpeg,
         )
         try:
             await client.play(
@@ -310,7 +318,15 @@ class TgCall(PyTgCalls):
         async def update_handler(_, update: types.Update) -> None:
             if isinstance(update, types.StreamEnded):
                 if update.stream_type == types.StreamEnded.Type.AUDIO:
-                    await self.play_next(update.chat_id)
+                    # Radio streams (duration == "∞") should auto-reconnect
+                    current = queue.get_current(update.chat_id)
+                    if current and getattr(current, "duration", "") == "∞":
+                        try:
+                            await self.replay(update.chat_id)
+                        except Exception:
+                            await self.play_next(update.chat_id)
+                    else:
+                        await self.play_next(update.chat_id)
             elif isinstance(update, types.ChatUpdate):
                 if update.status in [
                     types.ChatUpdate.Status.KICKED,
