@@ -106,7 +106,7 @@ async def _broadcast(_, message: types.Message):
         errors.ChatWriteForbidden,
         errors.ChannelPrivate,
         errors.ChatIdInvalid,
-        errors.BannedInChannel,
+        errors.UserBannedInChannel,
     )
 
     async with broadcasting:
