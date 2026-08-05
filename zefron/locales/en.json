@@ -41,7 +41,7 @@
     "help_auth": "<b><u>⊚ ᴀᴜᴛʜ ᴜsᴇʀs :</u></b>\n\n<blockquote>➻ ᴀᴜᴛʜ ᴜsᴇʀs ᴄᴀɴ ᴜsᴇ ᴀᴅᴍɪɴ ʀɪɢʜᴛs ᴡɪᴛʜᴏᴜᴛ ᴀᴅᴍɪɴ ʀɪɢʜᴛs ɪɴ ᴛʜᴇ ɢʀᴏᴜᴩ.\n\n/auth [ᴜsᴇʀ] : ᴀᴅᴅ ᴀ ᴜsᴇʀ ᴛᴏ ᴀᴜᴛʜ ʟɪsᴛ.\n\n/unauth [ᴜsᴇʀ] : ʀᴇᴍᴏᴠᴇ ᴀ ᴜsᴇʀ ꜰʀᴏᴍ ᴀᴜᴛʜ ʟɪsᴛ.\n\n/authusers : sʜᴏᴡ ᴛʜᴇ ʟɪsᴛ ᴏꜰ ᴀᴜᴛʜ ᴜsᴇʀs ᴏꜰ ᴛʜᴇ ɢʀᴏᴜᴩ.</blockquote>",
     "help_blist": "<b><u>⊚ ʙʟᴀᴄᴋʟɪsᴛ ꜰᴇᴀᴛᴜʀᴇ :</u></b> [ᴏɴʟʏ ꜰᴏʀ sᴜᴅᴏᴇʀs]\n\n➻ ʀᴇsᴛʀɪᴄᴛ ᴄʜᴀᴛs ᴀɴᴅ ᴜsᴇʀs ꜰʀᴏᴍ ᴜsɪɴɢ ᴛʜᴇ ʙᴏᴛ.\n\n/blacklist [ᴜsᴇʀ] : ʙʟᴀᴄᴋʟɪsᴛ ᴀ ᴜsᴇʀ ꜰʀᴏᴍ ᴜsɪɴɢ ᴛʜᴇ ʙᴏᴛ.\n\n/unblacklist [ᴜsᴇʀ] : ʀᴇᴍᴏᴠᴇ ᴜsᴇʀ ꜰʀᴏᴍ ʙʟᴀᴄᴋʟɪsᴛ.\n\n/blacklisted : sʜᴏᴡ ᴛʜᴇ ʙʟᴀᴄᴋʟɪsᴛᴇᴅ ᴜsᴇʀs ʟɪsᴛ.",
     "help_lang": "<b><u>⊚ ʟᴀɴɢᴜᴀɢᴇ :</u></b>\n\n<blockquote>» ᴄʜᴀɴɢᴇ ᴛʜᴇ ʙᴏᴛ ʟᴀɴɢᴜᴀɢᴇ ꜰᴏʀ ᴛʜɪs ɢʀᴏᴜᴩ.\n\n/lang : ᴄʜᴀɴɢᴇ ᴛʜᴇ ʟᴀɴɢᴜᴀɢᴇ ꜰᴏʀ ᴛʜɪs ᴄʜᴀᴛ.</blockquote>",
-    "help_ping": "<b><u>⊚ ɢᴇɴᴇʀᴀʟ ᴄᴏᴍᴍᴀɴᴅs :</u></b>\n\n<blockquote>/start : sᴛᴀʀᴛ ᴛʜᴇ ᴍᴜsɪᴄ ʙᴏᴛ.\n\n/help : ɢᴇᴛ ʜᴇʟᴩ ᴍᴇɴᴜ ᴡɪᴛʜ ᴄᴏᴍᴍᴀɴᴅs.\n\n/ping : sʜᴏᴡ ᴩɪɴɢ ᴀɴᴅ sʏsᴛᴇᴍ sᴛᴀᴛs.\n\n/stats : sʜᴏᴡ ᴏᴠᴇʀᴀʟʟ sᴛᴀᴛs ᴏꜰ ᴛʜᴇ ʙᴏᴛ.\n\n/settings : sʜᴏᴡ ɢʀᴏᴜᴩ sᴇᴛᴛɪɴɢs.</blockquote>",
+    "help_ping": "<b><u>⊚ ɢᴇɴᴇʀᴀʟ ᴄᴏᴍᴍᴀɴᴅs :</u></b>\n\n<blockquote>/start : sᴛᴀʀᴛ ᴛʜᴇ ᴍᴜsɪᴄ ʙᴏᴛ.\n\n/help : ɢᴇᴛ ʜᴇʟᴩ ᴍᴇɴᴜ ᴡɪᴛʜ ᴄᴏᴍᴍᴀɴᴅs.\n\n/ping : sʜᴏᴡ ᴩɪɴɢ ᴀɴᴅ sʏsᴛᴇᴍ sᴛᴀᴛs.\n\n/stats : sʜᴏᴡ ᴏᴠᴇʀᴀʟʟ sᴛᴀᴛs ᴏꜰ ᴛʜᴇ ʙᴏᴛ.\n\n/settings : sʜᴏᴡ ɢʀᴏᴜᴩ sᴇᴛᴛɪɴɢs.\n\n/lyrics [song] : ɢᴇᴛ sᴏɴɢ ʟʏʀɪᴄs.\n\n/radio [station/url] : sᴛʀᴇᴀᴍ ʟɪᴠᴇ ʀᴀᴅɪᴏ.</blockquote>",
     "help_fav": "<b><u>⊚ ꜰᴀᴠᴏᴜʀɪᴛᴇ ꜱᴏɴɢꜱ :</u></b>\n\n<blockquote>➻ ꜱᴀᴠᴇ ᴀɴᴅ ʀᴇᴩʟᴀʏ ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ ᴛʀᴀᴄᴋꜱ ᴀɴʏᴛɪᴍᴇ.\n\n/fav : ᴠɪᴇᴡ ʏᴏᴜʀ ꜰᴀᴠᴏᴜʀɪᴛᴇ ꜱᴏɴɢꜱ ʟɪꜱᴛ.\n\n/playfav 1 : ᴩʟᴀʏ ꜰᴀᴠ ꜱᴏɴɢ #1.\n\n/playfav 1 3 5 : ǫᴜᴇᴜᴇ ꜱᴩᴇᴄɪꜰɪᴄ ꜰᴀᴠ ꜱᴏɴɢꜱ.\n\n/playfav all : ǫᴜᴇᴜᴇ ᴀʟʟ ꜰᴀᴠ ꜱᴏɴɢꜱ ᴀᴛ ᴏɴᴄᴇ.\n\n/del_fav [ɴ] : ʀᴇᴍᴏᴠᴇ ꜱᴏɴɢ ɴᴜᴍʙᴇʀ ɴ ꜰʀᴏᴍ ꜰᴀᴠᴏᴜʀɪᴛᴇꜱ.\n\n❤️ ᴛᴀᴩ 🤍 ᴡʜɪʟᴇ ᴀ ꜱᴏɴɢ ɪꜱ ᴩʟᴀʏɪɴɢ ᴛᴏ ꜱᴀᴠᴇ ɪᴛ.</blockquote>",
     "help_play": "<b><u>⊚ ᴩʟᴀʏ ᴄᴏᴍᴍᴀɴᴅs :</u></b>\n\n<blockquote><b>v</b> : sᴛᴀɴᴅs ꜰᴏʀ ᴠɪᴅᴇᴏ ᴩʟᴀʏ.\n<b>force</b> : sᴛᴀɴᴅs ꜰᴏʀ ꜰᴏʀᴄᴇ ᴩʟᴀʏ.\n\n/play ᴏʀ /vplay : sᴛʀᴇᴀᴍ ᴛʜᴇ ʀᴇǫᴜᴇsᴛᴇᴅ ᴛʀᴀᴄᴋ.\n\n/playforce ᴏʀ /vplayforce : ꜰᴏʀᴄᴇ ᴩʟᴀʏ sᴛᴏᴩᴩɪɴɢ ᴄᴜʀʀᴇɴᴛ sᴛʀᴇᴀᴍ.\n\n/fvplay [sᴏɴɢ / ᴜʀʟ / ʀᴇᴩʟʏ] : ꜰᴏʀᴄᴇ ᴩʟᴀʏ ᴠɪᴅᴇᴏ sᴛᴏᴩᴩɪɴɢ ᴄᴜʀʀᴇɴᴛ sᴛʀᴇᴀᴍ.\n\n<b><u>⊚ ᴄʜᴀɴɴᴇʟ ᴩʟᴀʏ ᴄᴏᴍᴍᴀɴᴅs :</u></b>\n\n/channelplay [ɪᴅ/ᴅɪsᴀʙʟᴇ] : ᴄᴏɴɴᴇᴄᴛ ᴄʜᴀɴɴᴇʟ ᴛᴏ ɢʀᴏᴜᴩ ᴀɴᴅ sᴛʀᴇᴀᴍ.\n\n<b>Example:</b> <code>/play Blinding Lights</code></blockquote>",
     "help_queue": "<b><u>⊚ ǫᴜᴇᴜᴇ ᴄᴏᴍᴍᴀɴᴅs :</u></b>\n\n<blockquote>/queue : sʜᴏᴡ ᴄᴜʀʀᴇɴᴛ ᴛʀᴀᴄᴋ ǫᴜᴇᴜᴇ.\n\n/playing : sʜᴏᴡ ᴛʜᴇ ɴᴏᴡ-ᴩʟᴀʏɪɴɢ ᴛʀᴀᴄᴋ.</blockquote>",
@@ -163,5 +163,15 @@
     "play_locked_on": "🔒 <b>Play Locked!</b>\n\nNew plays are disabled. Users cannot queue songs until unlocked.",
     "play_locked_off": "🔓 <b>Play Unlocked!</b>\n\nUsers can queue songs again.",
     "play_already_locked": "⚠️ Play is already locked.",
-    "play_not_locked": "⚠️ Play is not locked."
+    "play_not_locked": "⚠️ Play is not locked.",
+    "radio_usage": "📻 <b>Radio Stream</b>\n\n<b>Usage:</b> <code>/radio [station name or stream URL]</code>\n\n<b>Available stations:</b>\n{0}\n\n<b>Example:</b> <code>/radio lofi</code>",
+    "radio_connecting": "📻 Connecting to <b>{0}</b> Radio…",
+    "radio_not_found": "❌ Station not found.\n\n<b>Available:</b> <code>{0}</code>\n\nOr pass a direct stream URL.",
+    "radio_unreachable": "❌ Could not reach <b>{0}</b> stream. Try another station.",
+    "radio_queued": "📋 <b>Added to Queue</b>  •  Position #{0}\n\n📻 <b>{1} Radio</b>  —  Live Stream",
+    "lyrics_usage": "🎤 <b>Usage:</b> <code>/lyrics [song name]</code>\n\n<b>Example:</b> <code>/lyrics Shape of You</code>",
+    "lyrics_searching": "🔍 Searching lyrics for <b>{0}</b>…",
+    "lyrics_not_found": "❌ No lyrics found for <b>{0}</b>.\n\nTry a more specific song name.",
+    "lyrics_error": "⚠️ Failed to fetch lyrics. Please try again.",
+    "lyrics_header": "🎤 <b>{0}</b>\n👤 <b>{1}</b>"
 }

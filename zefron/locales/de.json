@@ -161,5 +161,15 @@
     "play_locked_on": "🔒 <b>Play Locked!</b>\n\nNew plays are disabled. Users cannot queue songs until unlocked.",
     "play_locked_off": "🔓 <b>Play Unlocked!</b>\n\nUsers can queue songs again.",
     "play_already_locked": "⚠️ Play is already locked.",
-    "play_not_locked": "⚠️ Play is not locked."
+    "play_not_locked": "⚠️ Play is not locked.",
+    "radio_usage": "📻 <b>Radio Stream</b>\n\n<b>Usage:</b> <code>/radio [station name or stream URL]</code>\n\n<b>Available stations:</b>\n{0}\n\n<b>Example:</b> <code>/radio lofi</code>",
+    "radio_connecting": "📻 Connecting to <b>{0}</b> Radio…",
+    "radio_not_found": "❌ Station not found.\n\n<b>Available:</b> <code>{0}</code>\n\nOr pass a direct stream URL.",
+    "radio_unreachable": "❌ Could not reach <b>{0}</b> stream. Try another station.",
+    "radio_queued": "📋 <b>Added to Queue</b>  •  Position #{0}\n\n📻 <b>{1} Radio</b>  —  Live Stream",
+    "lyrics_usage": "🎤 <b>Usage:</b> <code>/lyrics [song name]</code>\n\n<b>Example:</b> <code>/lyrics Shape of You</code>",
+    "lyrics_searching": "🔍 Searching lyrics for <b>{0}</b>…",
+    "lyrics_not_found": "❌ No lyrics found for <b>{0}</b>.\n\nTry a more specific song name.",
+    "lyrics_error": "⚠️ Failed to fetch lyrics. Please try again.",
+    "lyrics_header": "🎤 <b>{0}</b>\n👤 <b>{1}</b>"
 }
