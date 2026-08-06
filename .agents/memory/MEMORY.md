@@ -1,1 +1,0 @@
-- [Radio stream validation](radio-stream-validation.md) — validate live stations with bounded GET probes; HEAD requests can falsely report failures.
