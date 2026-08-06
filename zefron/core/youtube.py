@@ -361,6 +361,54 @@ class YouTube:
             )
         return None
 
+    async def search_many(
+        self,
+        query: str,
+        limit: int,
+        m_id: int,
+        video: bool = False,
+    ) -> list[Track]:
+        """Return several search results for radio-style genre queues.
+
+        This intentionally uses the multi-result search provider directly:
+        OneGrab's search endpoint currently returns only its first result,
+        while genre radio needs a small queue of fresh songs.
+        """
+        try:
+            search = VideosSearch(query, limit=limit, with_live=False)
+            results = await search.next()
+        except Exception as exc:
+            logger.warning("Multi-result YouTube search failed for %r: %s", query, exc)
+            return []
+
+        tracks: list[Track] = []
+        for data in (results or {}).get("result", []):
+            duration = data.get("duration")
+            if not data.get("id") or not duration:
+                continue
+            try:
+                duration_sec = utils.to_seconds(duration)
+            except (TypeError, ValueError):
+                continue
+            if not duration_sec:
+                continue
+            thumbnails = data.get("thumbnails") or [{}]
+            tracks.append(
+                Track(
+                    id=data["id"],
+                    channel_name=(data.get("channel") or {}).get("name"),
+                    duration=duration,
+                    duration_sec=duration_sec,
+                    message_id=m_id,
+                    title=(data.get("title") or "")[:25],
+                    thumbnail=thumbnails[-1].get("url", "").split("?")[0],
+                    url=data.get("link"),
+                    view_count=(data.get("viewCount") or {}).get("short"),
+                    video=video,
+                )
+            )
+        return tracks
+
     # ── Track metadata from URL ────────────────────────────────────────────
 
     async def get_track(self, url: str, m_id: int, video: bool = False) -> Track | None:
