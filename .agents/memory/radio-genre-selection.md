@@ -3,8 +3,8 @@ name: Genre radio selection
 description: Why genre radio uses fresh song search queues instead of fixed live streams.
 ---
 
-Genre channels that promise latest or trending music should search several current results and queue songs; a fixed live radio URL cannot guarantee recency or genre-specific freshness.
+Genre channels requested as “radio” should use direct live radio streams, even when the user describes them as latest or trending; do not substitute YouTube search/download playback.
 
-**Why:** Live streams are controlled by third parties and may repeat old tracks or provide no useful now-playing metadata, while a small fresh-results queue gives predictable playback and lets the existing downloader handle each song.
+**Why:** The user's expected behavior is the same as existing Bollywood radio stations: continuous stream playback from a radio provider, not individual downloaded songs.
 
-**How to apply:** Keep Bollywood/live stations as explicit stream entries, but implement “latest/trending” regional channels as song-search queues with deduplication, duration filtering, and download failure handling.
+**How to apply:** Keep one direct station URL per requested genre, set the media duration to the infinite-stream marker, and preserve the existing radio reconnect path.
