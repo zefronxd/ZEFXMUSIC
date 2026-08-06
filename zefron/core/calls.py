@@ -152,7 +152,17 @@ class TgCall(PyTgCalls):
 
         media = queue.get_current(chat_id)
         _lang = await lang.get_lang(chat_id)
-        msg = await app.send_message(chat_id=chat_id, text=_lang["play_again"])
+        # Keep the original radio now-playing message across reconnects.
+        # Reusing it avoids a new message on every stream reconnect while
+        # still allowing a fallback if a user or admin removed it.
+        msg = None
+        if getattr(media, "duration", "") == "∞" and media.message_id:
+            try:
+                msg = await app.get_messages(chat_id, media.message_id)
+            except Exception:
+                pass
+        if msg is None:
+            msg = await app.send_message(chat_id=chat_id, text=_lang["play_again"])
         media.message_id = msg.id
         await self.play_media(chat_id, msg, media)
 
@@ -248,7 +258,9 @@ class TgCall(PyTgCalls):
 
         media = queue.get_next(chat_id)
         try:
-            if media.message_id:
+            # Radio announcements are intentionally persistent.  Normal
+            # song cards are cleaned up as the queue advances.
+            if media and media.message_id and getattr(media, "duration", "") != "∞":
                 await app.delete_messages(
                     chat_id=chat_id,
                     message_ids=media.message_id,

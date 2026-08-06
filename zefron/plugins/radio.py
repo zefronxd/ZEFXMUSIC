@@ -15,19 +15,54 @@ from zefron.helpers import Media
 RADIO_STATIONS: dict[str, str] = {
     # ── Hindi / Bollywood ──────────────────────────────────────────────────
     "bollywood":   "https://drive.uber.radio/uber/bollywoodnow/icecast.audio",
+    "bollywood_new": "https://drive.uber.radio/uber/bollywoodnow/icecast.audio",
+    "new":         "https://drive.uber.radio/uber/bollywoodnow/icecast.audio",
     "hindi":       "https://azuracast.vibesounds.in:8010/radio.mp3",
     "mirchi":      "http://162.244.80.118:9460/stream.mp3",
     "love":        "https://nl4.mystreaming.net/uber/bollywoodlove/icecast.audio",
     "90s":         "https://2.mystreaming.net/uber/bollywood2000s/icecast.audio",
     "2000s":       "https://2.mystreaming.net/uber/bollywood2000s/icecast.audio",
+    "old":         "https://2.mystreaming.net/uber/bollywood2000s/icecast.audio",
+    "bollywood_old": "https://2.mystreaming.net/uber/bollywood2000s/icecast.audio",
     "2010s":       "https://drive.uber.radio/uber/bollywood2010s/icecast.audio",
     "desi":        "https://streamer.radio.co/se30891e37/listen",
     "air":         "http://air.pc.cdn.bitgravity.com/air/live/pbaudio001/chunklist.m3u8",
-    # ── International ─────────────────────────────────────────────────────
+    # ── Regional Indian ────────────────────────────────────────────────────
+    # These are public live streams, so /radio can play them without
+    # downloading individual songs.  Aliases make both short and descriptive
+    # commands convenient (for example /radio punjabi_old).
+    "punjabi":     "https://bolpunjabi-ekamsoftware.radioca.st/stream",
+    "punjabi_new": "https://s4.radio.co/sfefce156f/listen",
+    "punjabi_old": "http://mehramedia.com:8021/;",
+    "haryanvi":    "https://azuracast.radiokasoot.com/radio/8000/listen",
+    "haryanvi_new": "https://azuracast.radiokasoot.com/radio/8000/listen",
+    "haryanvi_old": "https://azuracast.radiokasoot.com/radio/8000/listen",
+    "rajasthani":  "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
+    "rajasthani_new": "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
+    "rajasthani_old": "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
+    # ── English / International ────────────────────────────────────────────
+    "english":     "https://media-ssl.musicradio.com/CapitalUK",
+    "english_pop": "http://ice1.somafm.com/indiepop-128-mp3",
+    "pop":         "http://ice1.somafm.com/indiepop-128-mp3",
+    "pop_hits":    "https://media-ssl.musicradio.com/CapitalUK",
+    "english_new": "https://media-ssl.musicradio.com/CapitalUK",
+    "top40":       "https://media-ssl.musicradio.com/CapitalUK",
+    "english_old": "http://listen.181fm.com/181-goodtime_128k.mp3",
+    "oldies":      "http://listen.181fm.com/181-goodtime_128k.mp3",
+    "english_80s": "https://media-ssl.musicradio.com/Heart80sMP3",
+    "english_90s": "https://media-ssl.musicradio.com/Heart90sMP3",
+    "english_2000s": "https://as-hls-ww.live.cf.md.bbci.co.uk/pool_11351741/live/ww/bbc_radio_one_anthems/bbc_radio_one_anthems.isml/bbc_radio_one_anthems-audio%3d96000.norewind.m3u8",
+    "dance":       "https://media-ssl.musicradio.com/HeartDanceMP3",
+    "edm":         "http://ice1.somafm.com/beatblender-128-mp3",
+    "hiphop":      "http://stream.radiojar.com/c1912tk5rtzuv",
+    "hip_hop":     "http://stream.radiojar.com/c1912tk5rtzuv",
+    "rap":         "https://ice64.securenetsystems.net/LFTM",
+    "rnb":         "https://ice64.securenetsystems.net/LFTM",
     "lofi":        "http://ice1.somafm.com/groovesalad-128-mp3",
     "chill":       "http://ice1.somafm.com/groovesalad-128-mp3",
     "rock":        "http://ice1.somafm.com/metal-128-mp3",
     "metal":       "http://ice1.somafm.com/metal-128-mp3",
+    "classicrock": "https://cast1.torontocast.com:4610/stream",
     "beats":       "http://ice1.somafm.com/beatblender-128-mp3",
     "ambient":     "http://ice1.somafm.com/deepspaceone-128-mp3",
 }
@@ -40,7 +75,11 @@ def _resolve_station(query: str) -> tuple[str, str] | tuple[None, None]:
     q = query.strip()
     if _URL_RE.match(q):
         return q, q
-    key = q.lower()
+    key = q.lower().replace("-", "_").replace(" ", "_")
+    # Prefer an exact alias.  Without this, "punjabi_old" would match the
+    # shorter "punjabi" entry first because the fallback below is fuzzy.
+    if key in RADIO_STATIONS:
+        return key.capitalize(), RADIO_STATIONS[key]
     for name, url in RADIO_STATIONS.items():
         if name in key or key in name:
             return name.capitalize(), url
@@ -54,11 +93,6 @@ def _resolve_station(query: str) -> tuple[str, str] | tuple[None, None]:
 )
 @lang.language()
 async def radio_hndlr(_, m: types.Message) -> None:
-    try:
-        await m.delete()
-    except Exception:
-        pass
-
     video = "v" in m.command[0].lower()
 
     if len(m.command) < 2:
