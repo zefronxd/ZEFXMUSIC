@@ -361,46 +361,6 @@ class YouTube:
             )
         return None
 
-    async def search_many(
-        self, query: str, m_id: int, limit: int = 6, video: bool = False
-    ) -> list[Track]:
-        """Search several songs for playlist-style radio stations.
-
-        This intentionally uses YouTube's multi-result search instead of the
-        normal single-result search so a station can move through a fresh set
-        of songs rather than replaying one live stream forever.
-        """
-        try:
-            search = VideosSearch(query, limit=limit, with_live=False)
-            results = await search.next()
-        except Exception as exc:
-            logger.warning("Multi-result radio search failed: %s", exc)
-            return []
-
-        tracks: list[Track] = []
-        seen: set[str] = set()
-        for data in (results or {}).get("result", []):
-            video_id = data.get("id")
-            duration = data.get("duration")
-            if not video_id or video_id in seen or not duration:
-                continue
-            seen.add(video_id)
-            tracks.append(
-                Track(
-                    id=video_id,
-                    channel_name=data.get("channel", {}).get("name"),
-                    duration=duration,
-                    duration_sec=utils.to_seconds(duration),
-                    message_id=m_id,
-                    title=data.get("title", "")[:100],
-                    thumbnail=data.get("thumbnails", [{}])[-1].get("url", "").split("?")[0],
-                    url=data.get("link"),
-                    view_count=data.get("viewCount", {}).get("short"),
-                    video=video,
-                )
-            )
-        return tracks
-
     # ── Track metadata from URL ────────────────────────────────────────────
 
     async def get_track(self, url: str, m_id: int, video: bool = False) -> Track | None:

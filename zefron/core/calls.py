@@ -271,22 +271,6 @@ class TgCall(PyTgCalls):
             pass
 
         if not media:
-            # Haryanvi New Radio is a rotating YouTube-based station.  When
-            # its current batch ends, fetch another fresh batch instead of
-            # stopping like a normal finite queue.
-            if getattr(last_track, "radio_station", "") == "haryanvi_new":
-                try:
-                    from zefron.plugins.radio import refill_latest_haryanvi
-
-                    if await refill_latest_haryanvi(
-                        chat_id,
-                        message_id=getattr(last_track, "message_id", 0),
-                        video=getattr(last_track, "video", False),
-                    ):
-                        return
-                except Exception as exc:
-                    logger.warning("Haryanvi New Radio refill failed: %s", exc)
-
             # ── Autoplay: play up to 5 more songs, then stop ──────────────────
             ap = await db.get_autoplay(chat_id)
             if ap["on"] and ap["count"] < 5 and last_track:

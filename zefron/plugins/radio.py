@@ -4,15 +4,14 @@
 
 import re
 import aiohttp
-from datetime import datetime
 
 from pyrogram import enums, filters, types
 
-from zefron import zefx, app, db, lang, queue, yt
-from zefron.helpers import Media, Track
+from zefron import zefx, app, db, lang, queue
+from zefron.helpers import Media
 
 
-# Verified working stations (200 OK)
+# Public radio streams used by the /radio command.
 RADIO_STATIONS: dict[str, str] = {
     # ── Hindi / Bollywood ──────────────────────────────────────────────────
     "bollywood":   "https://drive.uber.radio/uber/bollywoodnow/icecast.audio",
@@ -36,9 +35,9 @@ RADIO_STATIONS: dict[str, str] = {
     "punjabi_new": "https://s4.radio.co/sfefce156f/listen",
     "punjabi_old": "http://mehramedia.com:8021/;",
     "haryanvi":    "https://azuracast.radiokasoot.com/radio/8000/listen",
-    # haryanvi_new is handled as a rotating YouTube playlist below so it
-    # does not repeat the same live station as the old/general aliases.
-    "haryanvi_new": "https://azuracast.radiokasoot.com/radio/8000/listen",
+    # Dedicated Khas Haryanvi 24x7 channel.  This is a direct radio stream,
+    # not a YouTube search/download source.
+    "haryanvi_new": "https://khasharyanvi.com:8000/live2",
     "haryanvi_old": "https://azuracast.radiokasoot.com/radio/8000/listen",
     "rajasthani":  "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
     "rajasthani_new": "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
@@ -89,57 +88,6 @@ def _resolve_station(query: str) -> tuple[str, str] | tuple[None, None]:
     return None, None
 
 
-def _is_latest_haryanvi(query: str) -> bool:
-    key = query.strip().lower().replace("-", "_").replace(" ", "_")
-    return key in {"haryanvi_new", "haryanvi_latest", "latest_haryanvi"}
-
-
-async def _latest_haryanvi_tracks(message_id: int, video: bool) -> list[Track]:
-    year = datetime.now().year
-    tracks = await yt.search_many(
-        f"latest Haryanvi songs {year} new Haryanvi song singer",
-        message_id,
-        limit=6,
-        video=video,
-    )
-    for track in tracks:
-        track.radio = True
-        track.radio_station = "haryanvi_new"
-        track.user = "📻 Haryanvi New Radio"
-    return tracks
-
-
-async def refill_latest_haryanvi(
-    chat_id: int, message_id: int = 0, video: bool = False
-) -> bool:
-    """Fetch and start the next latest-Haryanvi batch when the queue ends."""
-    tracks = await _latest_haryanvi_tracks(message_id, video)
-    if not tracks:
-        return False
-
-    first = tracks[0]
-    first.file_path = await yt.download(first.id, video=video)
-    if not first.file_path:
-        return False
-
-    for track in tracks:
-        queue.add(chat_id, track)
-
-    try:
-        message = await app.get_messages(chat_id, message_id) if message_id else None
-    except Exception:
-        message = None
-    if message is None:
-        message = await app.send_message(
-            chat_id=chat_id, text="📻 Haryanvi New Radio"
-        )
-    first.message_id = message.id
-    for track in tracks[1:]:
-        track.message_id = message.id
-    await zefx.play_media(chat_id=chat_id, message=message, media=first)
-    return True
-
-
 @app.on_message(
     filters.command(["radio", "vradio"])
     & filters.group
@@ -154,36 +102,6 @@ async def radio_hndlr(_, m: types.Message) -> None:
         return await m.reply_text(m.lang["radio_usage"].format(stations))
 
     query = " ".join(m.command[1:]).strip()
-
-    if _is_latest_haryanvi(query):
-        sent = await m.reply_text(
-            m.lang["radio_connecting"].format("Haryanvi New")
-        )
-        tracks = await _latest_haryanvi_tracks(sent.id, video)
-        if not tracks:
-            return await sent.edit_text(
-                m.lang["radio_unreachable"].format("Haryanvi New")
-            )
-
-        # Reuse one persistent radio message for the complete rotating set.
-        for track in tracks:
-            track.message_id = sent.id
-        first = tracks[0]
-        first.file_path = await yt.download(first.id, video=video)
-        if not first.file_path:
-            return await sent.edit_text(
-                m.lang["radio_unreachable"].format("Haryanvi New")
-            )
-
-        position = queue.add(m.chat.id, first)
-        for track in tracks[1:]:
-            queue.add(m.chat.id, track)
-
-        if position != 0 or await db.get_call(m.chat.id):
-            return await sent.edit_text(
-                m.lang["radio_queued"].format(position, "Haryanvi New")
-            )
-        return await zefx.play_media(chat_id=m.chat.id, message=sent, media=first)
 
     station_name, stream_url = _resolve_station(query)
 
@@ -204,7 +122,6 @@ async def radio_hndlr(_, m: types.Message) -> None:
         video=video,
         user=m.from_user.mention,
         radio=True,
-        radio_station=station_name.lower(),
     )
 
     if queue.get_queue(m.chat.id) or await db.get_call(m.chat.id):
