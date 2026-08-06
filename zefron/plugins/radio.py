@@ -29,18 +29,21 @@ RADIO_STATIONS: dict[str, str] = {
     # ── Regional / International ──────────────────────────────────────────
     # These are direct radio streams, just like the Bollywood stations above.
     "punjabi":     "https://bolpunjabi-ekamsoftware.radioca.st/stream",
-    "haryanvi":    "https://azuracast.radiokasoot.com/radio/8000/listen",
+    "haryanvi":    "https://stream.zeno.fm/ryektectsf9uv",
+    "topharyanvi": "http://weareharyanvi.com:8000/listen",
     "english":     "https://media-ssl.musicradio.com/CapitalUK",
     "rajasthani":  "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
 }
 
 RADIO_STATION_ALIASES = {
     "haryani": "haryanvi",
+    "top_haryanvi": "topharyanvi",
     "rajashtani": "rajasthani",
 }
 RADIO_STATION_LABELS = {
     "punjabi": "Punjabi",
-    "haryanvi": "Haryanvi",
+    "haryanvi": "Haryanvi Hits (Zeno FM)",
+    "topharyanvi": "Radio Haryanvi",
     "english": "English",
     "rajasthani": "Rajasthani",
 }
