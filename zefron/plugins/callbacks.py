@@ -45,7 +45,7 @@ async def _controls(_, query: types.CallbackQuery):
         try:
             ids_to_del = [
                 i for item, i in ((current, m_id), (media, media.message_id))
-                if i and getattr(item, "duration", "") != "∞"
+                if i and not getattr(item, "radio", False)
             ]
             if ids_to_del:
                 await app.delete_messages(
@@ -306,7 +306,7 @@ async def _rec_callback(_, query: types.CallbackQuery):
             m_id = current.message_id if current else None
             queue.force_add(chat_id, track, remove=False)
             try:
-                if m_id and getattr(current, "duration", "") != "∞":
+                if m_id and not getattr(current, "radio", False):
                     await app.delete_messages(chat_id=chat_id, message_ids=[m_id], revoke=True)
             except Exception:
                 pass

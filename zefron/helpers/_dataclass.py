@@ -18,6 +18,8 @@ class Media:
     time: int = 0
     user: str = None
     video: bool = False
+    radio: bool = False
+    radio_station: str = None
 
 
 @dataclass
@@ -35,3 +37,5 @@ class Track:
     user: str = None
     view_count: str = None
     video: bool = False
+    radio: bool = False
+    radio_station: str = None

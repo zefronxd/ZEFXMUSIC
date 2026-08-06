@@ -156,7 +156,7 @@ class TgCall(PyTgCalls):
         # Reusing it avoids a new message on every stream reconnect while
         # still allowing a fallback if a user or admin removed it.
         msg = None
-        if getattr(media, "duration", "") == "∞" and media.message_id:
+        if getattr(media, "radio", False) and media.message_id:
             try:
                 msg = await app.get_messages(chat_id, media.message_id)
             except Exception:
@@ -260,7 +260,7 @@ class TgCall(PyTgCalls):
         try:
             # Radio announcements are intentionally persistent.  Normal
             # song cards are cleaned up as the queue advances.
-            if media and media.message_id and getattr(media, "duration", "") != "∞":
+            if media and media.message_id and not getattr(media, "radio", False):
                 await app.delete_messages(
                     chat_id=chat_id,
                     message_ids=media.message_id,
@@ -271,6 +271,22 @@ class TgCall(PyTgCalls):
             pass
 
         if not media:
+            # Haryanvi New Radio is a rotating YouTube-based station.  When
+            # its current batch ends, fetch another fresh batch instead of
+            # stopping like a normal finite queue.
+            if getattr(last_track, "radio_station", "") == "haryanvi_new":
+                try:
+                    from zefron.plugins.radio import refill_latest_haryanvi
+
+                    if await refill_latest_haryanvi(
+                        chat_id,
+                        message_id=getattr(last_track, "message_id", 0),
+                        video=getattr(last_track, "video", False),
+                    ):
+                        return
+                except Exception as exc:
+                    logger.warning("Haryanvi New Radio refill failed: %s", exc)
+
             # ── Autoplay: play up to 5 more songs, then stop ──────────────────
             ap = await db.get_autoplay(chat_id)
             if ap["on"] and ap["count"] < 5 and last_track:
@@ -297,7 +313,14 @@ class TgCall(PyTgCalls):
             return
 
         _lang = await lang.get_lang(chat_id)
-        msg = await app.send_message(chat_id=chat_id, text=_lang["play_next"])
+        msg = None
+        if getattr(media, "radio", False) and media.message_id:
+            try:
+                msg = await app.get_messages(chat_id, media.message_id)
+            except Exception:
+                pass
+        if msg is None:
+            msg = await app.send_message(chat_id=chat_id, text=_lang["play_next"])
         if not media.file_path:
             media.file_path = await yt.download(media.id, video=media.video)
             if not media.file_path:
