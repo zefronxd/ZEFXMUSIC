@@ -22,6 +22,17 @@ async def cancel_dl(_, query: types.CallbackQuery):
     await tg.cancel(query)
 
 
+@app.on_callback_query(filters.regex(r"^close_message") & ~app.bl_users)
+@lang.language()
+async def _close_message(_, query: types.CallbackQuery):
+    """Delete only the message containing the controls, leaving playback running."""
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+
 @app.on_callback_query(filters.regex("controls") & ~app.bl_users)
 @lang.language()
 @can_manage_vc

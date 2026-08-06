@@ -35,6 +35,9 @@ RADIO_STATIONS: dict[str, str] = {
     "punjabi_new": "https://s4.radio.co/sfefce156f/listen",
     "punjabi_old": "http://mehramedia.com:8021/;",
     "haryanvi":    "https://azuracast.radiokasoot.com/radio/8000/listen",
+    "haryanvi_hits":  "https://stream.zeno.fm/ryektectsf9uv",
+    "radio_haryanvi": "http://weareharyanvi.com:8000/listen",
+    "radio_dhaakad":  "https://radiodhaakad.com:8000/live",
     # Dedicated Khas Haryanvi 24x7 channel.  This is a direct radio stream,
     # not a YouTube search/download source.
     "haryanvi_new": "https://khasharyanvi.com:8000/live2",
@@ -69,6 +72,12 @@ RADIO_STATIONS: dict[str, str] = {
     "ambient":     "http://ice1.somafm.com/deepspaceone-128-mp3",
 }
 
+RADIO_STATION_LABELS = {
+    "haryanvi_hits": "Haryanvi Hits (Zeno FM)",
+    "radio_haryanvi": "Radio Haryanvi",
+    "radio_dhaakad": "Radio Dhaakad",
+}
+
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
@@ -81,10 +90,10 @@ def _resolve_station(query: str) -> tuple[str, str] | tuple[None, None]:
     # Prefer an exact alias.  Without this, "punjabi_old" would match the
     # shorter "punjabi" entry first because the fallback below is fuzzy.
     if key in RADIO_STATIONS:
-        return key.capitalize(), RADIO_STATIONS[key]
+        return RADIO_STATION_LABELS.get(key, key.capitalize()), RADIO_STATIONS[key]
     for name, url in RADIO_STATIONS.items():
         if name in key or key in name:
-            return name.capitalize(), url
+            return RADIO_STATION_LABELS.get(name, name.capitalize()), url
     return None, None
 
 

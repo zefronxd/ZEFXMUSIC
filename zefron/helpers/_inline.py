@@ -57,6 +57,13 @@ class Inline:
                 self.ikb(text=ap_text, callback_data=f"autoplay_toggle {chat_id}", style=ap_style),
             ]
             keyboard.append(row)
+            keyboard.append([
+                self.ikb(
+                    text="✕ ᴄʟᴏsᴇ",
+                    callback_data=f"close_message {chat_id}",
+                    style=enums.ButtonStyle.DANGER,
+                )
+            ])
         return self.ikm(keyboard)
 
     def help_markup(
