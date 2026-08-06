@@ -28,22 +28,20 @@ RADIO_STATIONS: dict[str, str] = {
     "air":         "http://air.pc.cdn.bitgravity.com/air/live/pbaudio001/chunklist.m3u8",
     # ── Regional / International ──────────────────────────────────────────
     # These are direct radio streams, just like the Bollywood stations above.
-    "punjabi":     "https://bolpunjabi-ekamsoftware.radioca.st/stream",
+    # Radio City Punjabi (Zeno FM) — direct audio endpoint from its station page.
+    "punjabi":     "https://stream.zeno.fm/pa4h8kqd8f0uv",
     "haryanvi":    "https://stream.zeno.fm/ryektectsf9uv",
-    "topharyanvi": "http://weareharyanvi.com:8000/listen",
     "english":     "https://media-ssl.musicradio.com/CapitalUK",
     "rajasthani":  "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
 }
 
 RADIO_STATION_ALIASES = {
     "haryani": "haryanvi",
-    "top_haryanvi": "topharyanvi",
     "rajashtani": "rajasthani",
 }
 RADIO_STATION_LABELS = {
-    "punjabi": "Punjabi",
+    "punjabi": "Radio City Punjabi",
     "haryanvi": "Haryanvi Hits (Zeno FM)",
-    "topharyanvi": "Radio Haryanvi",
     "english": "English",
     "rajasthani": "Rajasthani",
 }
