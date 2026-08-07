@@ -68,7 +68,11 @@ async def _controls(_, query: types.CallbackQuery):
 
         msg = await app.send_message(chat_id=chat_id, text=query.lang["play_next"])
         if not media.file_path:
-            media.file_path = await yt.download(media.id, video=media.video)
+            media.file_path = (
+                await yt.download(media.id, video=True)
+                if media.video
+                else await yt.direct_stream(media.id)
+            )
         media.message_id = msg.id
         return await zefx.play_media(chat_id, msg, media)
 
@@ -305,7 +309,7 @@ async def _rec_callback(_, query: types.CallbackQuery):
                 pass
             queue.add(chat_id, track)
             msg = await app.send_message(chat_id=chat_id, text=query.lang["play_downloading"])
-            track.file_path = await yt.download(track.id, video=False)
+            track.file_path = await yt.direct_stream(track.id)
             if not track.file_path:
                 queue.remove_current(chat_id)
                 return await msg.edit_text(query.lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -322,7 +326,7 @@ async def _rec_callback(_, query: types.CallbackQuery):
             except Exception:
                 pass
             msg = await app.send_message(chat_id=chat_id, text=query.lang["play_next"])
-            track.file_path = await yt.download(track.id, video=False)
+            track.file_path = await yt.direct_stream(track.id)
             if not track.file_path:
                 queue.remove_current(chat_id)
                 return await msg.edit_text(query.lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -375,7 +379,7 @@ async def _rec_callback(_, query: types.CallbackQuery):
             pass
 
         msg = await app.send_message(chat_id=chat_id, text=query.lang["play_downloading"])
-        track.file_path = await yt.download(track.id, video=False)
+        track.file_path = await yt.direct_stream(track.id)
         if not track.file_path:
             queue.remove_current(chat_id)
             return await msg.edit_text(query.lang["error_no_file"].format(config.SUPPORT_CHAT))

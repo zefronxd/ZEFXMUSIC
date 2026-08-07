@@ -254,7 +254,7 @@ class TgCall(PyTgCalls):
         await db.add_call(chat_id)
 
         msg = await app.send_message(chat_id=chat_id, text=_lang["play_next"])
-        track.file_path = await yt.download(track.id, video=False)
+        track.file_path = await yt.direct_stream(track.id)
         if not track.file_path:
             queue.remove_current(chat_id)
             await db.reset_autoplay(chat_id)
@@ -332,7 +332,11 @@ class TgCall(PyTgCalls):
         if msg is None:
             msg = await app.send_message(chat_id=chat_id, text=_lang["play_next"])
         if not media.file_path:
-            media.file_path = await yt.download(media.id, video=media.video)
+            media.file_path = (
+                await yt.download(media.id, video=True)
+                if media.video
+                else await yt.direct_stream(media.id)
+            )
             if not media.file_path:
                 await self._play_next(chat_id)
                 return await msg.edit_text(

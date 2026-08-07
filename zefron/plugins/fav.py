@@ -201,7 +201,7 @@ async def playfav_cmd(_, m: types.Message):
 
     # ── Play first track if nothing active ────────────────────────────────
     if first_track:
-        first_track.file_path = await yt.download(first_track.id, video=False)
+        first_track.file_path = await yt.direct_stream(first_track.id)
         if not first_track.file_path:
             queue.remove_current(chat_id)
             return await sent.edit_text(m.lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -389,7 +389,7 @@ async def _fav_play(_, query: types.CallbackQuery):
         return
 
     msg = await app.send_message(chat_id=chat_id, text=query.lang["play_downloading"])
-    track.file_path = await yt.download(track.id, video=False)
+    track.file_path = await yt.direct_stream(track.id)
     if not track.file_path:
         queue.remove_current(chat_id)
         return await msg.edit_text(query.lang["error_no_file"].format(config.SUPPORT_CHAT))

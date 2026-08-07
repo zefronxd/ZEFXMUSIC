@@ -151,7 +151,9 @@ async def play_hndlr(
 
     if not file.file_path:
         fname = f"downloads/{file.id}.{'mp4' if video else 'webm'}"
-        if Path(fname).exists():
+        if not video:
+            file.file_path = await yt.direct_stream(file.id)
+        elif Path(fname).exists():
             file.file_path = fname
         else:
             file.file_path = await yt.download(file.id, video=video)

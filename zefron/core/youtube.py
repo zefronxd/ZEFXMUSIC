@@ -122,24 +122,12 @@ def _cleanup_wav_cache(keep: int = 25) -> None:
 YOUTUBEAPI_BASE = "https://youtubeapi--urlovsr.replit.app"
 
 
-async def _youtubeapi_direct_url(video_id: str) -> str | None:
-    """Return a direct streaming URL from youtubeapi-dbju — no file download."""
-    url = (
+def _youtubeapi_direct_url(video_id: str) -> str:
+    """Build the live audio endpoint without downloading or probing it."""
+    return (
         f"{YOUTUBEAPI_BASE}/api/media"
         f"?url=https://youtu.be/{video_id}&type=audio&quality=360"
     )
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.head(
-                url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True
-            ) as resp:
-                if resp.status == 200:
-                    logger.info("YoutubeAPI direct stream ready: %s", video_id)
-                    return url
-                logger.warning("YoutubeAPI HEAD %s → HTTP %s", video_id, resp.status)
-    except Exception as e:
-        logger.warning("YoutubeAPI HEAD check failed for %s: %s", video_id, e)
-    return None
 
 
 # ── ShrutiAPI download helpers ─────────────────────────────────────────────
@@ -410,13 +398,21 @@ class YouTube:
 
     # ── Download ───────────────────────────────────────────────────────────
 
+    async def direct_stream(self, video_id: str) -> str | None:
+        """Return a remote audio stream immediately; never create a local file."""
+        if not video_id:
+            return None
+        url = _youtubeapi_direct_url(video_id)
+        logger.info("Using direct audio stream: %s", video_id)
+        return url
+
     async def download(self, video_id: str, video: bool = False) -> str | None:
-        # ── Audio: YoutubeAPI direct stream → ShrutiAPI → yt-dlp ──────────
+        # ── Audio fallback: direct stream → local providers ────────────────
         if not video:
-            result = await _youtubeapi_direct_url(video_id)
+            result = await self.direct_stream(video_id)
             if result:
                 return result
-            logger.warning("YoutubeAPI direct stream failed for %s, trying ShrutiAPI", video_id)
+            logger.warning("Direct audio stream unavailable for %s, trying local fallback", video_id)
             result = await _shruti_download_audio(video_id)
             if result:
                 logger.info("ShrutiAPI audio ready: %s", result)
