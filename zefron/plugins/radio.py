@@ -8,6 +8,7 @@ from pyrogram import filters, types
 
 from zefron import zefx, app, db, lang, queue
 from zefron.helpers import Media
+from zefron.helpers._play import ensure_assistant_in_chat
 
 
 # Public radio streams used by the /radio command.
@@ -94,6 +95,9 @@ async def radio_hndlr(_, m: types.Message) -> None:
             )
         )
 
+    if not await ensure_assistant_in_chat(m.chat.id, m):
+        return
+
     sent = await m.reply_text(m.lang["radio_connecting"].format(station_name))
 
     media = Media(
@@ -108,7 +112,9 @@ async def radio_hndlr(_, m: types.Message) -> None:
         radio=True,
     )
 
-    if queue.get_queue(m.chat.id) or await db.get_call(m.chat.id):
+    # A stale active-call flag with an empty in-memory queue must not leave
+    # radio permanently queued without ever starting.
+    if queue.get_current(m.chat.id) is not None:
         position = queue.add(m.chat.id, media)
         return await sent.edit_text(
             m.lang["radio_queued"].format(position, station_name)

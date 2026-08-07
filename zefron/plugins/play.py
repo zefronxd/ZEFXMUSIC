@@ -120,12 +120,15 @@ async def play_hndlr(
         pass
     # ────────────────────────────────────────────────────────────────────────
 
+    had_current = queue.get_current(m.chat.id) is not None
+    was_active = await db.get_call(m.chat.id)
+
     if force:
         queue.force_add(m.chat.id, file)
     else:
         position = queue.add(m.chat.id, file)
 
-        if position != 0 or await db.get_call(m.chat.id):
+        if position != 0 or (was_active and had_current):
             await sent.edit_text(
                 m.lang["play_queued"].format(
                     position,

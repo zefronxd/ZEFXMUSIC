@@ -19,6 +19,10 @@ from zefron.helpers import Media, Track, buttons
 class TgCall(PyTgCalls):
     def __init__(self):
         self.clients = []
+        # A stream can emit more than one end/update event while Telegram is
+        # switching streams.  Keep one queue transition per chat so two
+        # handlers cannot pop two songs at once.
+        self._next_in_progress: set[int] = set()
 
     async def pause(self, chat_id: int) -> bool:
         client = await db.get_assistant(chat_id)
@@ -63,8 +67,20 @@ class TgCall(PyTgCalls):
             return await self.play_next(chat_id)
 
         is_radio = getattr(media, "duration", "") == "∞"
-        if is_radio:
-            _ffmpeg = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+        is_remote = isinstance(media.file_path, str) and media.file_path.startswith(
+            ("http://", "https://")
+        )
+        if is_radio or is_remote:
+            # YoutubeAPI and radio URLs are live HTTP inputs.  These options
+            # make ffmpeg reconnect instead of ending the Telegram stream on
+            # a short CDN/network interruption.
+            _ffmpeg = (
+                "-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 "
+                "-reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
+                "-reconnect_delay_max 5 -rw_timeout 15000000"
+            )
+            if seek_time > 1:
+                _ffmpeg = f"-ss {seek_time} {_ffmpeg}"
         elif seek_time > 1:
             _ffmpeg = f"-ss {seek_time}"
         else:
@@ -249,6 +265,16 @@ class TgCall(PyTgCalls):
         await self.play_media(chat_id, msg, track)
 
     async def play_next(self, chat_id: int) -> None:
+        if chat_id in self._next_in_progress:
+            return
+
+        self._next_in_progress.add(chat_id)
+        try:
+            await self._play_next(chat_id)
+        finally:
+            self._next_in_progress.discard(chat_id)
+
+    async def _play_next(self, chat_id: int) -> None:
         if loop := await db.get_loop(chat_id):
             await db.set_loop(chat_id, loop - 1)
             return await self.replay(chat_id)
@@ -308,7 +334,7 @@ class TgCall(PyTgCalls):
         if not media.file_path:
             media.file_path = await yt.download(media.id, video=media.video)
             if not media.file_path:
-                await self.play_next(chat_id)
+                await self._play_next(chat_id)
                 return await msg.edit_text(
                     _lang["error_no_file"].format(config.SUPPORT_CHAT)
                 )

@@ -12,6 +12,96 @@ from zefron.helpers import utils
 from zefron.helpers.spotify import is_spotify
 
 
+async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
+    """Make sure the selected assistant can resolve and join the group.
+
+    Radio commands do not pass through ``checkUB`` because they have their
+    own handler, so they must use the same assistant invitation flow
+    explicitly.
+    """
+    client = await db.get_client(chat_id)
+    try:
+        member = await app.get_chat_member(chat_id, client.id)
+        if member.status in [
+            enums.ChatMemberStatus.BANNED,
+            enums.ChatMemberStatus.RESTRICTED,
+        ]:
+            try:
+                await app.unban_chat_member(chat_id=chat_id, user_id=client.id)
+            except Exception:
+                await m.reply_text(
+                    m.lang["play_banned"].format(
+                        app.name,
+                        client.id,
+                        client.mention,
+                        f"@{client.username}" if client.username else None,
+                    )
+                )
+                return False
+        return True
+    except errors.ChatAdminRequired:
+        await m.reply_text(m.lang["admin_required"])
+        return False
+    except (
+        errors.UserNotParticipant,
+        errors.exceptions.bad_request_400.UserNotParticipant,
+    ):
+        if m.chat.username:
+            invite_link = m.chat.username
+            try:
+                await client.resolve_peer(invite_link)
+            except Exception:
+                pass
+        else:
+            try:
+                chat = await app.get_chat(chat_id)
+                invite_link = chat.invite_link
+                if not invite_link:
+                    invite_link = await app.export_chat_invite_link(chat_id)
+            except errors.ChatAdminRequired:
+                await m.reply_text(m.lang["admin_required"])
+                return False
+            except Exception as ex:
+                await m.reply_text(
+                    m.lang["play_invite_error"].format(type(ex).__name__)
+                )
+                return False
+
+        notice = await m.reply_text(m.lang["play_invite"].format(app.name))
+        await asyncio.sleep(2)
+        try:
+            await client.join_chat(invite_link)
+        except errors.UserAlreadyParticipant:
+            pass
+        except errors.InviteRequestSent:
+            await asyncio.sleep(2)
+            try:
+                await app.approve_chat_join_request(chat_id, client.id)
+            except errors.HideRequesterMissing:
+                pass
+            except Exception as ex:
+                await notice.edit_text(
+                    m.lang["play_invite_error"].format(type(ex).__name__)
+                )
+                return False
+        except Exception as ex:
+            logger.error("Error joining chat - %s: %s", chat_id, ex)
+            await notice.edit_text(
+                m.lang["play_invite_error"].format(type(ex).__name__)
+            )
+            return False
+
+        try:
+            await notice.delete()
+        except Exception:
+            pass
+        try:
+            await client.resolve_peer(chat_id)
+        except Exception:
+            pass
+        return True
+
+
 def checkUB(play):
     async def wrapper(_, m: types.Message):
         if not m.from_user:
@@ -51,71 +141,8 @@ def checkUB(play):
                 return await m.reply_text(m.lang["play_admin"])
 
         if chat_id not in db.active_calls:
-            client = await db.get_client(chat_id)
-            try:
-                member = await app.get_chat_member(chat_id, client.id)
-                if member.status in [
-                    enums.ChatMemberStatus.BANNED,
-                    enums.ChatMemberStatus.RESTRICTED,
-                ]:
-                    try:
-                        await app.unban_chat_member(
-                            chat_id=chat_id, user_id=client.id
-                        )
-                    except Exception:
-                        return await m.reply_text(
-                            m.lang["play_banned"].format(
-                                app.name,
-                                client.id,
-                                client.mention,
-                                f"@{client.username}" if client.username else None,
-                            )
-                        )
-            except errors.ChatAdminRequired:
-                return await m.reply_text(m.lang["admin_required"])
-            except (errors.UserNotParticipant, errors.exceptions.bad_request_400.UserNotParticipant):
-                if m.chat.username:
-                    invite_link = m.chat.username
-                    try:
-                        await client.resolve_peer(invite_link)
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        invite_link = (await app.get_chat(chat_id)).invite_link
-                        if not invite_link:
-                            invite_link = await app.export_chat_invite_link(chat_id)
-                    except errors.ChatAdminRequired:
-                        return await m.reply_text(m.lang["admin_required"])
-                    except Exception as ex:
-                        return await m.reply_text(
-                            m.lang["play_invite_error"].format(type(ex).__name__)
-                        )
-
-                umm = await m.reply_text(m.lang["play_invite"].format(app.name))
-                await asyncio.sleep(2)
-                try:
-                    await client.join_chat(invite_link)
-                except errors.UserAlreadyParticipant:
-                    pass
-                except errors.InviteRequestSent:
-                    await asyncio.sleep(2)
-                    try:
-                        await app.approve_chat_join_request(chat_id, client.id)
-                    except errors.HideRequesterMissing:
-                        pass
-                    except Exception as ex:
-                        return await umm.edit_text(
-                            m.lang["play_invite_error"].format(type(ex).__name__)
-                        )
-                except Exception as ex:
-                    logger.error(f"Error joining chat - {chat_id}: {ex}")
-                    return await umm.edit_text(
-                        m.lang["play_invite_error"].format(type(ex).__name__)
-                    )
-
-                await umm.delete()
-                await client.resolve_peer(chat_id)
+            if not await ensure_assistant_in_chat(chat_id, m):
+                return
 
         if await db.get_cmd_delete(chat_id):
             try:
