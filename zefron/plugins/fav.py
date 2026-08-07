@@ -388,7 +388,7 @@ async def _fav_play(_, query: types.CallbackQuery):
         )
         return
 
-    msg = await app.send_message(chat_id=chat_id, text=query.lang["play_downloading"])
+    msg = await app.send_message(chat_id=chat_id, text=query.lang["play_searching"])
     track.file_path = await yt.direct_stream(track.id)
     if not track.file_path:
         queue.remove_current(chat_id)

@@ -3,6 +3,8 @@
 # This file is part of ZEFXMusic
 
 
+import asyncio
+
 from ntgcalls import (ConnectionNotFound, TelegramServerError,
                       RTMPStreamingUnsupported, ConnectionError)
 from pyrogram.errors import (ChatSendMediaForbidden, ChatSendPhotosForbidden,
@@ -23,6 +25,67 @@ class TgCall(PyTgCalls):
         # switching streams.  Keep one queue transition per chat so two
         # handlers cannot pop two songs at once.
         self._next_in_progress: set[int] = set()
+
+    async def _update_now_playing(
+        self, chat_id: int, message: Message, media: Media | Track, _lang
+    ) -> None:
+        """Update the card after playback has already started.
+
+        Card/thumbnail generation is network and CPU work.  It must not delay
+        ``client.play``; if Telegram rejects the card update, playback should
+        continue normally.
+        """
+        try:
+            _thumb = (
+                await thumb.generate(media)
+                if isinstance(media, Track)
+                else config.DEFAULT_THUMB
+            ) if config.THUMB_GEN else None
+
+            # Do not let a slow thumbnail overwrite the next song's card.
+            if queue.get_current(chat_id) is not media:
+                return
+
+            text = _lang["play_media"].format(
+                media.url,
+                media.title,
+                media.duration,
+                media.user,
+            )
+            ap_on = (await db.get_autoplay(chat_id))["on"]
+            keyboard = buttons.controls(
+                chat_id,
+                autoplay_on=ap_on,
+                track_id=media.id if isinstance(media, Track) else "",
+            )
+            try:
+                if _thumb:
+                    await message.edit_media(
+                        media=InputMediaPhoto(media=_thumb, caption=text),
+                        reply_markup=keyboard,
+                    )
+                else:
+                    await message.edit_text(text, reply_markup=keyboard)
+            except (ChatSendMediaForbidden, ChatSendPhotosForbidden, MessageIdInvalid):
+                if _thumb:
+                    sent = await app.send_photo(
+                        chat_id=chat_id,
+                        photo=_thumb,
+                        caption=text,
+                        reply_markup=keyboard,
+                    )
+                else:
+                    sent = await app.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=keyboard,
+                    )
+                if queue.get_current(chat_id) is media:
+                    media.message_id = sent.id
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            logger.warning("Now-playing card update failed for %s: %s", chat_id, ex)
 
     async def pause(self, chat_id: int) -> bool:
         client = await db.get_assistant(chat_id)
@@ -56,11 +119,6 @@ class TgCall(PyTgCalls):
     ) -> None:
         client = await db.get_assistant(chat_id)
         _lang = await lang.get_lang(chat_id)
-        _thumb = (
-            await thumb.generate(media)
-            if isinstance(media, Track)
-            else config.DEFAULT_THUMB
-        ) if config.THUMB_GEN else None
 
         if not media.file_path:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -107,44 +165,11 @@ class TgCall(PyTgCalls):
             if not seek_time:
                 media.time = 1
                 await db.add_call(chat_id)
-                text = _lang["play_media"].format(
-                    media.url,
-                    media.title,
-                    media.duration,
-                    media.user,
+                # Start VC playback first; card generation/editing is not on
+                # the latency-critical path.
+                asyncio.create_task(
+                    self._update_now_playing(chat_id, message, media, _lang)
                 )
-                ap_on = (await db.get_autoplay(chat_id))["on"]
-                keyboard = buttons.controls(
-                    chat_id,
-                    autoplay_on=ap_on,
-                    track_id=media.id if isinstance(media, Track) else "",
-                )
-                try:
-                    if _thumb:
-                        await message.edit_media(
-                            media=InputMediaPhoto(
-                                media=_thumb,
-                                caption=text,
-                            ),
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        await message.edit_text(text, reply_markup=keyboard)
-                except (ChatSendMediaForbidden, ChatSendPhotosForbidden, MessageIdInvalid):
-                    if _thumb:
-                        sent = await app.send_photo(
-                            chat_id=chat_id,
-                            photo=_thumb,
-                            caption=text,
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        sent = await app.send_message(
-                            chat_id=chat_id,
-                            text=text,
-                            reply_markup=keyboard,
-                        )
-                    media.message_id = sent.id
         except FileNotFoundError:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
             await self.play_next(chat_id)
@@ -152,6 +177,25 @@ class TgCall(PyTgCalls):
             await self.stop(chat_id)
             await message.edit_text(_lang["error_no_call"])
         except exceptions.NoAudioSourceFound:
+            # The direct stream is intentionally tried first for speed.  If a
+            # particular video is unavailable at the provider, retry once
+            # through the local fallback before advancing the queue.
+            if (
+                isinstance(media, Track)
+                and isinstance(media.file_path, str)
+                and media.file_path.startswith("https://youtubeapi")
+            ):
+                logger.warning(
+                    "Direct stream rejected for %s; trying audio fallback",
+                    media.id,
+                )
+                media.file_path = await yt.download(
+                    media.id, video=False, direct=False
+                )
+                if media.file_path:
+                    return await self.play_media(
+                        chat_id, message, media, seek_time
+                    )
             await message.edit_text(_lang["error_no_audio"])
             await self.play_next(chat_id)
         except (ConnectionError, ConnectionNotFound, TelegramServerError):
@@ -160,6 +204,9 @@ class TgCall(PyTgCalls):
         except RTMPStreamingUnsupported:
             await self.stop(chat_id)
             await message.edit_text(_lang["error_rtmp"])
+        except Exception as ex:
+            logger.exception("Playback failed in chat %s: %s", chat_id, ex)
+            await self.play_next(chat_id)
 
 
     async def replay(self, chat_id: int) -> None:
@@ -167,6 +214,9 @@ class TgCall(PyTgCalls):
             return
 
         media = queue.get_current(chat_id)
+        if not media:
+            await self.stop(chat_id)
+            return
         _lang = await lang.get_lang(chat_id)
         # Keep the original radio now-playing message across reconnects.
         # Reusing it avoids a new message on every stream reconnect while

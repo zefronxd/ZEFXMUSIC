@@ -406,9 +406,11 @@ class YouTube:
         logger.info("Using direct audio stream: %s", video_id)
         return url
 
-    async def download(self, video_id: str, video: bool = False) -> str | None:
+    async def download(
+        self, video_id: str, video: bool = False, direct: bool = True
+    ) -> str | None:
         # ── Audio fallback: direct stream → local providers ────────────────
-        if not video:
+        if not video and direct:
             result = await self.direct_stream(video_id)
             if result:
                 return result
