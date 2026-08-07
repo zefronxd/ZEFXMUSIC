@@ -109,7 +109,11 @@ async def play_hndlr(
         )
 
     if await db.is_logger():
-        await utils.play_log(m, sent.link, file.title, file.duration)
+        # Logging is not part of playback.  Keep it off the latency-critical
+        # path so VC setup can begin immediately after track resolution.
+        asyncio.create_task(
+            utils.play_log(m, sent.link, file.title, file.duration)
+        )
 
     file.user = mention
 

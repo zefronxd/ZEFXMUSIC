@@ -143,8 +143,12 @@ class TgCall(PyTgCalls):
         media: Media | Track,
         seek_time: int = 0,
     ) -> None:
-        client = await db.get_assistant(chat_id)
-        _lang = await lang.get_lang(chat_id)
+        # These lookups are independent.  Resolve them together so a cold
+        # chat does not pay both database waits before the VC starts.
+        client, _lang = await asyncio.gather(
+            db.get_assistant(chat_id),
+            lang.get_lang(chat_id),
+        )
 
         if not media.file_path:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -193,7 +197,9 @@ class TgCall(PyTgCalls):
                 await client.play(
                     chat_id=chat_id,
                     stream=stream,
-                    config=types.GroupCallConfig(auto_start=False),
+                    # Let PyTgCalls start the group call immediately when
+                    # needed instead of requiring a second start round trip.
+                    config=types.GroupCallConfig(auto_start=True),
                 )
             # A stop/force transition may have happened while Telegram was
             # connecting.  Do not mark an old stream as active afterwards.

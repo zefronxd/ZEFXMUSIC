@@ -1,0 +1,1 @@
+- [Voice playback latency](voice-playback-latency.md) — start remote audio before UI decoration or logging; keep those operations cancellable/backgrounded.
