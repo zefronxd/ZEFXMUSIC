@@ -25,6 +25,30 @@ class TgCall(PyTgCalls):
         # switching streams.  Keep one queue transition per chat so two
         # handlers cannot pop two songs at once.
         self._next_in_progress: set[int] = set()
+        self._play_generation: dict[int, int] = {}
+        self._play_locks: dict[int, asyncio.Lock] = {}
+        self._card_tasks: dict[int, asyncio.Task] = {}
+
+    def _schedule_next(self, chat_id: int) -> None:
+        """Advance after the current coroutine releases its transition guard."""
+        async def _advance():
+            # ``play_media`` can be called from inside ``_play_next``.  Yield
+            # once so the outer transition releases _next_in_progress first.
+            await asyncio.sleep(0)
+            await self.play_next(chat_id)
+
+        asyncio.create_task(_advance())
+
+    def _generation(self, chat_id: int) -> int:
+        return self._play_generation.get(chat_id, 0)
+
+    def _play_lock(self, chat_id: int) -> asyncio.Lock:
+        return self._play_locks.setdefault(chat_id, asyncio.Lock())
+
+    def _cancel_card_task(self, chat_id: int) -> None:
+        task = self._card_tasks.pop(chat_id, None)
+        if task and not task.done():
+            task.cancel()
 
     async def _update_now_playing(
         self, chat_id: int, message: Message, media: Media | Track, _lang
@@ -99,6 +123,8 @@ class TgCall(PyTgCalls):
 
     async def stop(self, chat_id: int) -> None:
         client = await db.get_assistant(chat_id)
+        self._play_generation[chat_id] = self._generation(chat_id) + 1
+        self._cancel_card_task(chat_id)
         queue.clear(chat_id)
         await db.remove_call(chat_id)
         await db.set_loop(chat_id, 0)
@@ -122,7 +148,8 @@ class TgCall(PyTgCalls):
 
         if not media.file_path:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
-            return await self.play_next(chat_id)
+            self._schedule_next(chat_id)
+            return
 
         is_radio = getattr(media, "duration", "") == "∞"
         is_remote = isinstance(media.file_path, str) and media.file_path.startswith(
@@ -156,27 +183,44 @@ class TgCall(PyTgCalls):
             ),
             ffmpeg_parameters=_ffmpeg,
         )
+        # Invalidate an older connection attempt before waiting for Telegram.
+        generation = self._generation(chat_id) + 1
+        self._play_generation[chat_id] = generation
         try:
-            await client.play(
-                chat_id=chat_id,
-                stream=stream,
-                config=types.GroupCallConfig(auto_start=False),
-            )
+            async with self._play_lock(chat_id):
+                if generation != self._generation(chat_id):
+                    return
+                await client.play(
+                    chat_id=chat_id,
+                    stream=stream,
+                    config=types.GroupCallConfig(auto_start=False),
+                )
+            # A stop/force transition may have happened while Telegram was
+            # connecting.  Do not mark an old stream as active afterwards.
+            if generation != self._generation(chat_id):
+                return
             if not seek_time:
                 media.time = 1
                 await db.add_call(chat_id)
                 # Start VC playback first; card generation/editing is not on
                 # the latency-critical path.
-                asyncio.create_task(
+                self._cancel_card_task(chat_id)
+                self._card_tasks[chat_id] = asyncio.create_task(
                     self._update_now_playing(chat_id, message, media, _lang)
                 )
         except FileNotFoundError:
+            if generation != self._generation(chat_id):
+                return
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
-            await self.play_next(chat_id)
+            self._schedule_next(chat_id)
         except exceptions.NoActiveGroupCall:
+            if generation != self._generation(chat_id):
+                return
             await self.stop(chat_id)
             await message.edit_text(_lang["error_no_call"])
         except exceptions.NoAudioSourceFound:
+            if generation != self._generation(chat_id):
+                return
             # The direct stream is intentionally tried first for speed.  If a
             # particular video is unavailable at the provider, retry once
             # through the local fallback before advancing the queue.
@@ -197,16 +241,22 @@ class TgCall(PyTgCalls):
                         chat_id, message, media, seek_time
                     )
             await message.edit_text(_lang["error_no_audio"])
-            await self.play_next(chat_id)
+            self._schedule_next(chat_id)
         except (ConnectionError, ConnectionNotFound, TelegramServerError):
+            if generation != self._generation(chat_id):
+                return
             await self.stop(chat_id)
             await message.edit_text(_lang["error_tg_server"])
         except RTMPStreamingUnsupported:
+            if generation != self._generation(chat_id):
+                return
             await self.stop(chat_id)
             await message.edit_text(_lang["error_rtmp"])
         except Exception as ex:
+            if generation != self._generation(chat_id):
+                return
             logger.exception("Playback failed in chat %s: %s", chat_id, ex)
-            await self.play_next(chat_id)
+            self._schedule_next(chat_id)
 
 
     async def replay(self, chat_id: int) -> None:
@@ -388,7 +438,7 @@ class TgCall(PyTgCalls):
                 else await yt.direct_stream(media.id)
             )
             if not media.file_path:
-                await self._play_next(chat_id)
+                self._schedule_next(chat_id)
                 return await msg.edit_text(
                     _lang["error_no_file"].format(config.SUPPORT_CHAT)
                 )

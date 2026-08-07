@@ -12,6 +12,34 @@ from zefron import zefx, app, config, db, lang, queue, tasks, userbot, yt
 from zefron.helpers import buttons
 
 
+_prefetch_tasks: dict[int, asyncio.Task] = {}
+
+
+def _schedule_prefetch(chat_id: int, media) -> None:
+    """Prefetch video media without blocking timer updates or playback."""
+    old = _prefetch_tasks.get(chat_id)
+    if old and not old.done():
+        return
+
+    async def _prefetch():
+        try:
+            if media.file_path:
+                return
+            media.file_path = (
+                await yt.download(media.id, video=True)
+                if media.video
+                else await yt.direct_stream(media.id)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            media.file_path = None
+        finally:
+            _prefetch_tasks.pop(chat_id, None)
+
+    _prefetch_tasks[chat_id] = asyncio.create_task(_prefetch())
+
+
 _GROUP_ONLY_CMDS = [
     "play", "playforce", "vplay", "vplayforce",
     "pause", "resume", "skip", "next", "stop", "end",
@@ -88,11 +116,7 @@ async def update_timer(length=10, sleep=12):
                 if remaining <= 30:
                     next = queue.get_next(chat_id, check=True)
                     if next and not next.file_path:
-                        next.file_path = (
-                            await yt.download(next.id, video=True)
-                            if next.video
-                            else await yt.direct_stream(next.id)
-                        )
+                        _schedule_prefetch(chat_id, next)
 
                 if remaining < 10:
                     remove = True
