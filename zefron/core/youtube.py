@@ -119,7 +119,7 @@ def _cleanup_wav_cache(keep: int = 25) -> None:
 
 
 # ── YoutubeAPI (primary audio source) ─────────────────────────────────────
-YOUTUBEAPI_BASE = "https://youtubeapi-dbju.onrender.com"
+YOUTUBEAPI_BASE = "https://youtubeapi--urlovsr.replit.app"
 
 
 async def _youtubeapi_direct_url(video_id: str) -> str | None:
