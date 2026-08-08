@@ -31,6 +31,11 @@ class Config:
         self.THUMB_GEN: bool = getenv("THUMB_GEN", "True").lower() == "true"
         self.VIDEO_PLAY: bool = getenv("VIDEO_PLAY", "True").lower() == "true"
 
+        # Telegram voice-chat baseline: PyTgCalls HIGH is 48 kHz stereo.
+        # Keep these explicit so every playback path uses the same contract.
+        self.AUDIO_SAMPLE_RATE = 48000
+        self.AUDIO_CHANNELS = 2
+
         self.LANG_CODE = getenv("LANG_CODE", "en")
 
         self.ONEGRAB_API_KEY = getenv("ONEGRAB_API_KEY")

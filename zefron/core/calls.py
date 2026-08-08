@@ -12,6 +12,7 @@ from pyrogram.errors import (ChatSendMediaForbidden, ChatSendPhotosForbidden,
 from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls import PyTgCalls, exceptions, types
 from pytgcalls.pytgcalls_session import PyTgCallsSession
+from pytgcalls.types.raw import AudioParameters
 
 from zefron import (app, config, db, lang, logger,
                    queue, thumb, userbot, yt)
@@ -262,7 +263,12 @@ class TgCall(PyTgCalls):
         is_video = bool(media.video)
         stream = types.MediaStream(
             media_path=media.file_path,
-            audio_parameters=types.AudioQuality.HIGH,
+            # Keep the VC contract explicit: PyTgCalls emits signed 16-bit
+            # little-endian PCM at 48 kHz stereo from these parameters.
+            audio_parameters=AudioParameters(
+                bitrate=config.AUDIO_SAMPLE_RATE,
+                channels=config.AUDIO_CHANNELS,
+            ),
             video_parameters=types.VideoQuality.HD_720p,
             # Shruti video responses can be video-only or expose an audio
             # codec ffmpeg cannot decode. Video playback must not be rejected

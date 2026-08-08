@@ -1,8 +1,8 @@
-modules = ["python-3.10", "bash", "nix"]
+modules = ["bash", "nix", "python-3.11"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "tcl", "tk", "zlib"]
+packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "postgresql", "tcl", "tk", "zlib"]
 
 [agent]
 expertMode = true
@@ -28,7 +28,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "uv run --python 3.10 python3 -m zefron"
+args = "uv run --python 3.11 python3 -m zefron"
 
 [userenv]
 

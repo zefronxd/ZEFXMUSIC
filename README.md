@@ -113,6 +113,13 @@ cp sample.env .env
 bash start
 ```
 
+### Replit audio baseline
+
+The Replit workflow uses Python 3.11, PyTgCalls 2.3.3, and the NTgCalls
+native media engine. Audio is normalized by FFmpeg to signed 16-bit,
+48 kHz stereo PCM before it enters the Telegram voice chat. This is an
+internal playback baseline and is intentionally not user-configurable.
+
 ### Heroku
 
 [![Deploy on Heroku](https://img.shields.io/badge/Deploy%20On%20Heroku-black?style=for-the-badge&logo=heroku)](https://dashboard.heroku.com/new?template=https://github.com/zefronxd/ZEFXMusic)
