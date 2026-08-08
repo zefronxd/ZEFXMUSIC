@@ -28,6 +28,10 @@ SHRUTI_API_KEYS = (
     "ShrutiBotswVCjLFds5hj34MDSFTxI",
 )
 
+# Audio provider order is intentional: youtubeapi first, ShrutiBot second.
+# The youtubeapi endpoint returns the media bytes directly.
+YOUTUBE_API_MEDIA_URL = "https://youtubeapi--urlovsr.replit.app/api/media"
+
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"
 
@@ -207,6 +211,72 @@ async def _shruti_download_audio(video_id: str) -> str | None:
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, _cleanup_wav_cache, 25)
 
+    return result
+
+
+async def _youtubeapi_download_audio(video_id: str) -> str | None:
+    """Download audio from youtubeapi, then normalize it for voice playback."""
+    if not video_id:
+        return None
+
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    # Keep a provider-specific cache so it can never be confused with the
+    # Shruti MP3 cache for the same YouTube ID.
+    media_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.youtubeapi.mp3")
+    wav_path = _wav_path(media_path)
+
+    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
+        return wav_path
+
+    if not (os.path.exists(media_path) and os.path.getsize(media_path) > 0):
+        temp_path = media_path + ".dl"
+        try:
+            params = {
+                "url": f"https://youtu.be/{video_id}",
+                "type": "audio",
+                "quality": "360",
+            }
+            timeout = aiohttp.ClientTimeout(total=300)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(YOUTUBE_API_MEDIA_URL, params=params) as resp:
+                    if resp.status != 200:
+                        logger.warning(
+                            "youtubeapi audio %s → HTTP %s",
+                            video_id,
+                            resp.status,
+                        )
+                        return None
+
+                    content_type = resp.headers.get("content-type", "").lower()
+                    if "json" in content_type or content_type.startswith("text/"):
+                        logger.warning(
+                            "youtubeapi audio %s returned non-media content (%s)",
+                            video_id,
+                            content_type or "unknown",
+                        )
+                        return None
+
+                    with open(temp_path, "wb") as output:
+                        async for chunk in resp.content.iter_chunked(131072):
+                            output.write(chunk)
+
+            if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+                return None
+            os.replace(temp_path, media_path)
+        except Exception as ex:
+            logger.warning("youtubeapi audio %s failed: %s", video_id, ex)
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+
+    if not os.path.exists(media_path) or os.path.getsize(media_path) == 0:
+        return None
+
+    result = await _convert_to_wav(media_path)
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _cleanup_wav_cache, 25)
     return result
 
 
@@ -471,46 +541,36 @@ class YouTube:
     # ── Download ───────────────────────────────────────────────────────────
 
     async def direct_stream(self, video_id: str) -> str | None:
-        """Return a stable local audio source for uninterrupted VC playback.
+        """Return a stable local audio source using the requested provider order.
 
-        The old implementation returned a live CDN URL immediately. That
-        reduced start latency, but any short network stall drained FFmpeg's
-        input buffer and caused audible gaps in Telegram voice chat. Download
-        and normalize the track before joining the stream instead.
+        youtubeapi is always attempted first. ShrutiBot is the only fallback
+        for audio; yt-dlp is intentionally not used in this playback path.
         """
         if not video_id:
             return None
-        result = await _shruti_download_audio(video_id)
+
+        result = await _youtubeapi_download_audio(video_id)
         if result:
-            logger.info("Using cached 48 kHz audio source: %s", video_id)
+            logger.info("Using youtubeapi audio source: %s", video_id)
             return result
 
-        # Keep yt-dlp as a local-file fallback. ``direct=False`` skips this
-        # method and avoids recursion through the normal download path.
-        result = await self.download(video_id, video=False, direct=False)
+        logger.warning(
+            "youtubeapi audio unavailable for %s; trying ShrutiBot fallback",
+            video_id,
+        )
+        result = await _shruti_download_audio(video_id)
         if result:
-            logger.info("Using yt-dlp local audio source: %s", video_id)
+            logger.info("Using ShrutiBot audio fallback: %s", video_id)
         return result
 
     async def download(
         self, video_id: str, video: bool = False, direct: bool = True
     ) -> str | None:
-        # ── Audio source: normalized local cache → yt-dlp fallback ─────────
-        if not video and direct:
-            result = await self.direct_stream(video_id)
-            if result:
-                return result
-            logger.warning(
-                "Primary local audio source unavailable for %s, trying fallback",
-                video_id,
-            )
-            result = await _shruti_download_audio(video_id)
-            if result:
-                logger.info("ShrutiAPI audio ready: %s", result)
-                return result
-            logger.warning(
-                "ShrutiAPI audio failed for %s, falling back to yt-dlp", video_id
-            )
+        # ── Audio source: youtubeapi → ShrutiBot fallback ──────────────────
+        # Keep this provider order for every audio call, including callers
+        # that pass direct=False for legacy compatibility.
+        if not video:
+            return await self.direct_stream(video_id)
 
         # ── Video: local ShrutiAPI MKV ─────────────────────────────────────
         if video:
