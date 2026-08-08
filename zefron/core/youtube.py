@@ -221,9 +221,11 @@ async def _shruti_download_audio(video_id: str) -> str | None:
 
 
 async def _shruti_download_video(video_id: str) -> str | None:
-    """Download video as MP4 from ShrutiAPI."""
+    """Download ShrutiAPI's video/x-matroska response locally."""
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
+    # ShrutiAPI returns an MKV/WebM container (AV1 + Opus), not MP4.
+    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mkv")
+    temp_path = file_path + ".part"
 
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
@@ -244,16 +246,25 @@ async def _shruti_download_video(video_id: str) -> str | None:
                             resp.status,
                         )
                         continue
-                    with open(file_path, "wb") as f:
+                    content_type = resp.headers.get("content-type", "").lower()
+                    if "json" in content_type or "text/" in content_type:
+                        logger.warning(
+                            "ShrutiAPI video key=%s returned non-media content",
+                            api_key[:12],
+                        )
+                        continue
+                    with open(temp_path, "wb") as f:
                         async for chunk in resp.content.iter_chunked(131072):
                             f.write(chunk)
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                os.replace(temp_path, file_path)
                 return file_path
         except Exception as e:
             logger.warning("ShrutiAPI video key=%s failed: %s", api_key[:12], e)
-            if os.path.exists(file_path):
+            for path in (temp_path, file_path):
                 try:
-                    os.remove(file_path)
+                    if os.path.exists(path):
+                        os.remove(path)
                 except Exception:
                     pass
     return None
@@ -497,22 +508,11 @@ class YouTube:
                 "ShrutiAPI audio failed for %s, falling back to yt-dlp", video_id
             )
 
-        # ── Video: direct ShrutiAPI stream ────────────────────────────────
+        # ── Video: local ShrutiAPI MKV ─────────────────────────────────────
         if video:
-            if direct:
-                result = _shruti_video_stream_url(video_id)
-                if result:
-                    logger.info("Using direct ShrutiAPI video stream: %s", video_id)
-                    return result
-                logger.error("ShrutiAPI key is not configured; cannot play video")
-                return None
-
-            # Direct streaming already failed. Keep the fallback on
-            # ShrutiAPI, but materialize a local MP4 so ffmpeg does not have
-            # to parse the provider's live response again.
             result = await _shruti_download_video(video_id)
             if result:
-                logger.info("ShrutiAPI video fallback ready: %s", video_id)
+                logger.info("ShrutiAPI video ready locally: %s", video_id)
             return result
 
         # ── yt-dlp fallback (audio only) ────────────────────────────────────

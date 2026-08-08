@@ -112,9 +112,9 @@ class TgCall(PyTgCalls):
                 )
                 return True
 
-        # The direct endpoint can be slow to probe even when its response is
-        # valid. Materialize the same ShrutiAPI response locally so ffprobe
-        # can inspect it without waiting on the remote stream.
+        # Legacy queued items may still contain a direct URL. Materialize the
+        # same ShrutiAPI response locally so ffprobe does not probe the remote
+        # stream and hit PyTgCalls' timeout.
         logger.warning(
             "ShrutiAPI direct video timed out for %s; downloading via ShrutiAPI",
             media.id,
