@@ -672,6 +672,8 @@ _REC_CACHE_TTL_DAYS = 7  # MongoDB documents expire after this many days
 
 
 _REC_CACHE_VERSION = "v2"  # bump when filter logic changes to invalidate stale entries
+_RECOMMEND_SLOTS = asyncio.Semaphore(4)
+_RECOMMEND_INFLIGHT: dict[tuple[int, str], asyncio.Task] = {}
 
 
 def _rec_cache_key(title: str, artist: str) -> str:
@@ -854,8 +856,27 @@ async def fetch_and_cache(
     chat_id: int, video_id: str, title: str, channel: str = ""
 ) -> None:
     """Fetch related songs and store them in the cache (for background tasks)."""
-    songs = await fetch_related_songs(video_id, title, channel)
-    cache_recommendations(chat_id, title, songs)
+    key = (chat_id, video_id)
+    current = _RECOMMEND_INFLIGHT.get(key)
+    if current and not current.done():
+        return
+
+    task = asyncio.current_task()
+    _RECOMMEND_INFLIGHT[key] = task
+    try:
+        # Recommendations are optional UI work.  Bound network/search
+        # concurrency so a playlist or many active VCs cannot starve audio
+        # handling and Telegram update processing.
+        async with _RECOMMEND_SLOTS:
+            songs = await fetch_related_songs(video_id, title, channel)
+        cache_recommendations(chat_id, title, songs)
+    except asyncio.CancelledError:
+        raise
+    except Exception as ex:
+        logger.debug("Background recommendation fetch failed: %s", ex)
+    finally:
+        if _RECOMMEND_INFLIGHT.get(key) is task:
+            _RECOMMEND_INFLIGHT.pop(key, None)
 
 
 def build_recommend_keyboard(

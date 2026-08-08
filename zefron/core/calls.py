@@ -25,19 +25,35 @@ class TgCall(PyTgCalls):
         # switching streams.  Keep one queue transition per chat so two
         # handlers cannot pop two songs at once.
         self._next_in_progress: set[int] = set()
+        self._next_tasks: dict[int, asyncio.Task] = {}
         self._play_generation: dict[int, int] = {}
         self._play_locks: dict[int, asyncio.Lock] = {}
         self._card_tasks: dict[int, asyncio.Task] = {}
 
     def _schedule_next(self, chat_id: int) -> None:
-        """Advance after the current coroutine releases its transition guard."""
-        async def _advance():
-            # ``play_media`` can be called from inside ``_play_next``.  Yield
-            # once so the outer transition releases _next_in_progress first.
-            await asyncio.sleep(0)
-            await self.play_next(chat_id)
+        """Schedule one reliable queue transition after the current one ends."""
+        current = self._next_tasks.get(chat_id)
+        if current and not current.done():
+            return
 
-        asyncio.create_task(_advance())
+        async def _advance():
+            try:
+                # ``play_media`` can be called from inside ``_play_next``.
+                # Wait for that transition to release its guard instead of
+                # racing it and silently losing the queue advance.
+                while chat_id in self._next_in_progress:
+                    await asyncio.sleep(0.05)
+                await self.play_next(chat_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Scheduled queue transition failed for %s", chat_id)
+            finally:
+                task = asyncio.current_task()
+                if self._next_tasks.get(chat_id) is task:
+                    self._next_tasks.pop(chat_id, None)
+
+        self._next_tasks[chat_id] = asyncio.create_task(_advance())
 
     def _generation(self, chat_id: int) -> int:
         return self._play_generation.get(chat_id, 0)
@@ -48,6 +64,14 @@ class TgCall(PyTgCalls):
     def _cancel_card_task(self, chat_id: int) -> None:
         task = self._card_tasks.pop(chat_id, None)
         if task and not task.done():
+            task.cancel()
+
+    def _cancel_next_task(self, chat_id: int) -> None:
+        task = self._next_tasks.pop(chat_id, None)
+        # ``stop`` can be reached from inside the scheduled transition itself.
+        # Never cancel the current task while it is unwinding its own queue
+        # transition.
+        if task is not asyncio.current_task() and task and not task.done():
             task.cancel()
 
     async def _update_now_playing(
@@ -125,6 +149,7 @@ class TgCall(PyTgCalls):
         client = await db.get_assistant(chat_id)
         self._play_generation[chat_id] = self._generation(chat_id) + 1
         self._cancel_card_task(chat_id)
+        self._cancel_next_task(chat_id)
         queue.clear(chat_id)
         await db.remove_call(chat_id)
         await db.set_loop(chat_id, 0)
@@ -143,12 +168,13 @@ class TgCall(PyTgCalls):
         media: Media | Track,
         seek_time: int = 0,
     ) -> None:
-        # These lookups are independent.  Resolve them together so a cold
-        # chat does not pay both database waits before the VC starts.
-        client, _lang = await asyncio.gather(
-            db.get_assistant(chat_id),
-            lang.get_lang(chat_id),
-        )
+        # Language is only needed for UI/error messages.  Resolve the
+        # assistant first so a cold chat does not wait on two database lookups
+        # before the first audio packet can be sent to the VC.
+        client = await db.get_assistant(chat_id)
+        _lang = lang.languages.get(config.LANG_CODE)
+        if _lang is None:
+            _lang = next(iter(lang.languages.values()), {})
 
         if not media.file_path:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -208,6 +234,13 @@ class TgCall(PyTgCalls):
             if not seek_time:
                 media.time = 1
                 await db.add_call(chat_id)
+                # Refresh the per-chat language only after playback has
+                # started.  A language-cache/database hiccup must never turn a
+                # successful stream into a failed queue transition.
+                try:
+                    _lang = await lang.get_lang(chat_id)
+                except Exception:
+                    pass
                 # Start VC playback first; card generation/editing is not on
                 # the latency-critical path.
                 self._cancel_card_task(chat_id)

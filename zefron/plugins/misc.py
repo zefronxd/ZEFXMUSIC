@@ -13,6 +13,9 @@ from zefron.helpers import buttons
 
 
 _prefetch_tasks: dict[int, asyncio.Task] = {}
+_prefetch_slots = asyncio.Semaphore(3)
+_ui_slots = asyncio.Semaphore(6)
+_watch_slots = asyncio.Semaphore(6)
 
 
 def _schedule_prefetch(chat_id: int, media) -> None:
@@ -25,11 +28,17 @@ def _schedule_prefetch(chat_id: int, media) -> None:
         try:
             if media.file_path:
                 return
-            media.file_path = (
-                await yt.download(media.id, video=True)
-                if media.video
-                else await yt.direct_stream(media.id)
-            )
+            # Keep expensive local video downloads from saturating CPU, disk,
+            # and the remote provider when many VCs approach the next track at
+            # the same time.  Direct audio URLs return immediately.
+            async with _prefetch_slots:
+                if media.file_path:
+                    return
+                media.file_path = (
+                    await yt.download(media.id, video=True)
+                    if media.video
+                    else await yt.direct_stream(media.id)
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -87,7 +96,7 @@ async def track_time():
     while True:
         await asyncio.sleep(1)
         for chat_id in list(db.active_calls):
-            if not await db.playing(chat_id):
+            if not db.active_calls.get(chat_id):
                 continue
             media = queue.get_current(chat_id)
             if not media:
@@ -96,40 +105,42 @@ async def track_time():
 
 
 async def update_timer(length=10, sleep=12):
-    while True:
-        await asyncio.sleep(sleep)
-        for chat_id in list(db.active_calls):
-            if not await db.playing(chat_id):
-                continue
-            try:
-                media = queue.get_current(chat_id)
-                if not media:
-                    continue
-                duration, message_id = media.duration_sec, media.message_id
-                if not duration or not message_id or not media.time:
-                    continue
-                played = media.time
-                remaining = max(duration - played, 0)
-                pos = min(int((played / duration) * length), length - 1)
-                timer = "—" * pos + "◉" + "—" * (length - pos - 1)
+    async def _update_chat(chat_id: int) -> None:
+        if not db.active_calls.get(chat_id):
+            return
+        try:
+            media = queue.get_current(chat_id)
+            if not media:
+                return
+            duration, message_id = media.duration_sec, media.message_id
+            if not duration or not message_id or not media.time:
+                return
+            played = media.time
+            remaining = max(duration - played, 0)
+            pos = min(int((played / duration) * length), length - 1)
+            timer = "—" * pos + "◉" + "—" * (length - pos - 1)
 
-                if remaining <= 30:
-                    next = queue.get_next(chat_id, check=True)
-                    if next and not next.file_path:
-                        _schedule_prefetch(chat_id, next)
+            if remaining <= 30:
+                next_media = queue.get_next(chat_id, check=True)
+                if next_media and not next_media.file_path:
+                    _schedule_prefetch(chat_id, next_media)
 
-                if remaining < 10:
-                    remove = True
+            if remaining < 10:
+                remove = True
+            else:
+                if config.THUMB_GEN:
+                    timer = (
+                        f"{time.strftime('%M:%S', time.gmtime(played))} | "
+                        f"{timer} | -{time.strftime('%M:%S', time.gmtime(remaining))}"
+                    )
                 else:
-                    if config.THUMB_GEN:
-                        timer = f"{time.strftime('%M:%S', time.gmtime(played))} | {timer} | -{time.strftime('%M:%S', time.gmtime(remaining))}"
-                    else:
-                        timer = None
-                    remove = False
+                    timer = None
+                remove = False
 
-                if not timer and not remove:
-                    continue
+            if not timer and not remove:
+                return
 
+            async with _ui_slots:
                 await app.edit_message_reply_markup(
                     chat_id=chat_id,
                     message_id=message_id,
@@ -137,35 +148,54 @@ async def update_timer(length=10, sleep=12):
                         chat_id=chat_id, timer=timer, remove=remove
                     ),
                 )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+    while True:
+        await asyncio.sleep(sleep)
+        await asyncio.gather(
+            *(_update_chat(chat_id) for chat_id in list(db.active_calls)),
+            return_exceptions=True,
+        )
+
+
+async def vc_watcher(sleep=15):
+    async def _watch_chat(chat_id: int) -> None:
+        async with _watch_slots:
+            try:
+                client = await db.get_assistant(chat_id)
+                media = queue.get_current(chat_id)
+                if not media:
+                    return
+                participants = await client.get_participants(chat_id)
+                if len(participants) >= 2 or media.time <= 30:
+                    return
+
+                _lang = await lang.get_lang(chat_id)
+                sent = await app.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=media.message_id,
+                    reply_markup=buttons.controls(
+                        chat_id=chat_id, status=_lang["stopped"], remove=True
+                    ),
+                )
+                await zefx.stop(chat_id)
+                await sent.reply_text(_lang["auto_left"])
+            except errors.MessageIdInvalid:
+                pass
             except asyncio.CancelledError:
                 raise
             except Exception:
                 pass
 
-
-async def vc_watcher(sleep=15):
     while True:
         await asyncio.sleep(sleep)
-        for chat_id in list(db.active_calls):
-            client = await db.get_assistant(chat_id)
-            media = queue.get_current(chat_id)
-            if not media:
-                continue
-            participants = await client.get_participants(chat_id)
-            if len(participants) < 2 and media.time > 30:
-                _lang = await lang.get_lang(chat_id)
-                try:
-                    sent = await app.edit_message_reply_markup(
-                        chat_id=chat_id,
-                        message_id=media.message_id,
-                        reply_markup=buttons.controls(
-                            chat_id=chat_id, status=_lang["stopped"], remove=True
-                        ),
-                    )
-                    await zefx.stop(chat_id)
-                    await sent.reply_text(_lang["auto_left"])
-                except errors.MessageIdInvalid:
-                    pass
+        await asyncio.gather(
+            *(_watch_chat(chat_id) for chat_id in list(db.active_calls)),
+            return_exceptions=True,
+        )
 
 
 if config.AUTO_END:

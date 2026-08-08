@@ -4,6 +4,7 @@
 
 
 import os
+import asyncio
 import aiohttp
 from PIL import (Image, ImageDraw, ImageEnhance,
                  ImageFilter, ImageFont, ImageOps)
@@ -19,6 +20,7 @@ class Thumbnail:
         self.font1 = ImageFont.truetype("zefron/helpers/Raleway-Bold.ttf", 30)
         self.font2 = ImageFont.truetype("zefron/helpers/Inter-Light.ttf", 30)
         self.session: aiohttp.ClientSession | None = None
+        self._render_slots = asyncio.Semaphore(2)
 
     _HEADERS = {
         "User-Agent": (
@@ -92,6 +94,17 @@ class Thumbnail:
                 logger.warning("Thumbnail: no usable image for %s (%s)", song.title, song.id)
                 return config.DEFAULT_THUMB
 
+            async with self._render_slots:
+                return await asyncio.to_thread(
+                    self._render, song, temp, output, size
+                )
+        except Exception as e:
+            logger.warning("Thumbnail generation failed for %s: %s", getattr(song, "id", "?"), e)
+            return config.DEFAULT_THUMB
+
+    def _render(self, song: Track, temp: str, output: str, size) -> str:
+        """Render PIL work off the event loop and return the cached image."""
+        try:
             thumb = Image.open(temp).convert("RGBA").resize(
                 size, Image.Resampling.LANCZOS,
             )

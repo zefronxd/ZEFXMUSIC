@@ -19,12 +19,12 @@ from zefron.helpers import Track, utils
 
 
 # ── ShrutiMusic API ────────────────────────────────────────────────────────
-SHRUTI_API_URL  = "https://api01.shrutibots.site"
-SHRUTI_API_KEY  = "ShrutiBots2knm7tCsnIVesZt50Lwb"
-SHRUTI_API_KEY2 = "ShrutiBotsdZvv4iyovLZxFlVzZhv4"  # fallback key
+SHRUTI_API_URL = "https://api01.shrutibots.site"
+SHRUTI_API_KEY = "ShrutiBotsdZvv4iyovLZxFlVzZhv4"
+SHRUTI_API_KEY2 = "ShrutiBotswVCjLFds5hj34MDSFTxI"  # fallback key
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
-ONEGRAB_BASE   = "https://api.onegrab.fun"
+ONEGRAB_BASE = "https://api.onegrab.fun"
 
 DOWNLOAD_DIR = "downloads"
 
@@ -68,13 +68,20 @@ async def _convert_to_wav(mp3_path: str) -> str:
                 pass
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y",
-                "-threads", "0",
-                "-i", mp3_path,
-                "-ar", "48000",
-                "-ac", "2",
-                "-acodec", "pcm_s16le",
-                "-map_metadata", "-1",
+                "ffmpeg",
+                "-y",
+                "-threads",
+                "0",
+                "-i",
+                mp3_path,
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-acodec",
+                "pcm_s16le",
+                "-map_metadata",
+                "-1",
                 tmp,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -132,6 +139,7 @@ def _youtubeapi_direct_url(video_id: str) -> str:
 
 # ── ShrutiAPI download helpers ─────────────────────────────────────────────
 
+
 async def _shruti_download_audio(video_id: str) -> str | None:
     """Download audio as MP3 from ShrutiAPI, pre-convert to WAV."""
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -153,11 +161,20 @@ async def _shruti_download_audio(video_id: str) -> str | None:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(
                             f"{SHRUTI_API_URL}/download",
-                            params={"url": video_id, "type": "audio", "api_key": api_key},
+                            params={
+                                "url": video_id,
+                                "type": "audio",
+                                "api_key": api_key,
+                            },
                             timeout=aiohttp.ClientTimeout(total=300),
                         ) as resp:
                             if resp.status != 200:
-                                logger.warning("ShrutiAPI audio %s key=%s → HTTP %s", video_id, api_key[:12], resp.status)
+                                logger.warning(
+                                    "ShrutiAPI audio %s key=%s → HTTP %s",
+                                    video_id,
+                                    api_key[:12],
+                                    resp.status,
+                                )
                                 break
                             tmp_dl = mp3_path + ".dl"
                             with open(tmp_dl, "wb") as f:
@@ -168,7 +185,12 @@ async def _shruti_download_audio(video_id: str) -> str | None:
                                 downloaded = True
                                 break
                 except Exception as e:
-                    logger.warning("ShrutiAPI audio key=%s attempt %s failed: %s", api_key[:12], attempt + 1, e)
+                    logger.warning(
+                        "ShrutiAPI audio key=%s attempt %s failed: %s",
+                        api_key[:12],
+                        attempt + 1,
+                        e,
+                    )
                     for leftover in [mp3_path + ".dl"]:
                         if os.path.exists(leftover):
                             try:
@@ -178,7 +200,9 @@ async def _shruti_download_audio(video_id: str) -> str | None:
                     if attempt == 0:
                         await asyncio.sleep(2)
 
-        if not downloaded or not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
+        if not downloaded or not (
+            os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0
+        ):
             return None
 
     # Pre-convert to WAV
@@ -208,7 +232,12 @@ async def _shruti_download_video(video_id: str) -> str | None:
                     timeout=aiohttp.ClientTimeout(total=600),
                 ) as resp:
                     if resp.status != 200:
-                        logger.warning("ShrutiAPI video %s key=%s → HTTP %s", video_id, api_key[:12], resp.status)
+                        logger.warning(
+                            "ShrutiAPI video %s key=%s → HTTP %s",
+                            video_id,
+                            api_key[:12],
+                            resp.status,
+                        )
                         continue
                     with open(file_path, "wb") as f:
                         async for chunk in resp.content.iter_chunked(131072):
@@ -234,6 +263,7 @@ def _secs_to_str(seconds: int) -> str:
 
 
 # ── Main YouTube class ─────────────────────────────────────────────────────
+
 
 class YouTube:
     def __init__(self):
@@ -374,7 +404,9 @@ class YouTube:
 
     # ── Playlist ───────────────────────────────────────────────────────────
 
-    async def playlist(self, limit: int, user: str, url: str, video: bool) -> list[Track | None]:
+    async def playlist(
+        self, limit: int, user: str, url: str, video: bool
+    ) -> list[Track | None]:
         tracks = []
         try:
             plist = await Playlist.get(url)
@@ -385,7 +417,9 @@ class YouTube:
                     duration=data.get("duration"),
                     duration_sec=utils.to_seconds(data.get("duration")),
                     title=data.get("title", "")[:25],
-                    thumbnail=data.get("thumbnails", [{}])[-1].get("url", "").split("?")[0],
+                    thumbnail=data.get("thumbnails", [{}])[-1]
+                    .get("url", "")
+                    .split("?")[0],
                     url=data.get("link", "").split("&list=")[0],
                     user=user,
                     view_count="",
@@ -414,12 +448,17 @@ class YouTube:
             result = await self.direct_stream(video_id)
             if result:
                 return result
-            logger.warning("Direct audio stream unavailable for %s, trying local fallback", video_id)
+            logger.warning(
+                "Direct audio stream unavailable for %s, trying local fallback",
+                video_id,
+            )
             result = await _shruti_download_audio(video_id)
             if result:
                 logger.info("ShrutiAPI audio ready: %s", result)
                 return result
-            logger.warning("ShrutiAPI audio failed for %s, falling back to yt-dlp", video_id)
+            logger.warning(
+                "ShrutiAPI audio failed for %s, falling back to yt-dlp", video_id
+            )
 
         # ── Video: ShrutiAPI → MP4 ─────────────────────────────────────────
         if video:
@@ -427,7 +466,9 @@ class YouTube:
             if result:
                 logger.info("ShrutiAPI video ready: %s", result)
                 return result
-            logger.warning("ShrutiAPI video failed for %s, falling back to yt-dlp", video_id)
+            logger.warning(
+                "ShrutiAPI video failed for %s, falling back to yt-dlp", video_id
+            )
 
         # ── yt-dlp fallback ────────────────────────────────────────────────
         yt_url = self.base + video_id
