@@ -74,6 +74,63 @@ class TgCall(PyTgCalls):
         if task is not asyncio.current_task() and task and not task.done():
             task.cancel()
 
+    async def _recover_shruti_video(
+        self,
+        chat_id: int,
+        message: Message,
+        media: Media | Track,
+        seek_time: int,
+        allow_shruti_retry: bool,
+    ) -> bool:
+        """Recover a Shruti video after ffprobe rejects the remote stream."""
+        if not (
+            isinstance(media, Track)
+            and media.video
+            and isinstance(media.file_path, str)
+            and media.file_path.startswith("https://api01.shrutibots.site/")
+        ):
+            return False
+
+        if allow_shruti_retry:
+            from zefron.core.youtube import shruti_video_stream_urls
+
+            current_path = media.file_path
+            for candidate in shruti_video_stream_urls(media.id):
+                if candidate == current_path:
+                    continue
+                logger.warning(
+                    "ShrutiAPI video source rejected for %s; retrying Shruti key",
+                    media.id,
+                )
+                media.file_path = candidate
+                await self.play_media(
+                    chat_id,
+                    message,
+                    media,
+                    seek_time,
+                    allow_shruti_retry=False,
+                )
+                return True
+
+        # The direct endpoint can be slow to probe even when its response is
+        # valid. Materialize the same ShrutiAPI response locally so ffprobe
+        # can inspect it without waiting on the remote stream.
+        logger.warning(
+            "ShrutiAPI direct video timed out for %s; downloading via ShrutiAPI",
+            media.id,
+        )
+        media.file_path = await yt.download(media.id, video=True, direct=False)
+        if media.file_path:
+            await self.play_media(
+                chat_id,
+                message,
+                media,
+                seek_time,
+                allow_shruti_retry=False,
+            )
+            return True
+        return False
+
     async def _update_now_playing(
         self, chat_id: int, message: Message, media: Media | Track, _lang
     ) -> None:
@@ -256,6 +313,20 @@ class TgCall(PyTgCalls):
                 self._card_tasks[chat_id] = asyncio.create_task(
                     self._update_now_playing(chat_id, message, media, _lang)
                 )
+        except asyncio.TimeoutError:
+            if generation != self._generation(chat_id):
+                return
+            if await self._recover_shruti_video(
+                chat_id,
+                message,
+                media,
+                seek_time,
+                allow_shruti_retry,
+            ):
+                return
+            logger.warning("Playback source check timed out in chat %s", chat_id)
+            await message.edit_text(_lang["error_no_audio"])
+            self._schedule_next(chat_id)
         except FileNotFoundError:
             if generation != self._generation(chat_id):
                 return
@@ -272,51 +343,14 @@ class TgCall(PyTgCalls):
             # Audio's direct source can use the legacy local fallback. Video
             # must remain ShrutiAPI-only; never silently switch /vplay to a
             # different provider.
-            if (
-                allow_shruti_retry
-                and isinstance(media, Track)
-                and isinstance(media.file_path, str)
-                and media.video
-                and media.file_path.startswith("https://api01.shrutibots.site/")
+            if await self._recover_shruti_video(
+                chat_id,
+                message,
+                media,
+                seek_time,
+                allow_shruti_retry,
             ):
-                # A Shruti key can be temporarily rate-limited. Retry with
-                # another Shruti key only; /vplay must never switch provider.
-                from zefron.core.youtube import shruti_video_stream_urls
-
-                current_path = media.file_path
-                for candidate in shruti_video_stream_urls(media.id):
-                    if candidate == current_path:
-                        continue
-                    logger.warning(
-                        "ShrutiAPI video source rejected for %s; retrying Shruti key",
-                        media.id,
-                    )
-                    media.file_path = candidate
-                    return await self.play_media(
-                        chat_id,
-                        message,
-                        media,
-                        seek_time,
-                        allow_shruti_retry=False,
-                    )
-                # If all direct Shruti sources are unavailable (for example
-                # a temporary provider rate limit), use Shruti's MP4
-                # download endpoint instead of silently skipping the track.
-                logger.warning(
-                    "Direct ShrutiAPI video failed for %s; downloading via ShrutiAPI",
-                    media.id,
-                )
-                media.file_path = await yt.download(
-                    media.id, video=True, direct=False
-                )
-                if media.file_path:
-                    return await self.play_media(
-                        chat_id,
-                        message,
-                        media,
-                        seek_time,
-                        allow_shruti_retry=False,
-                    )
+                return
             if (
                 isinstance(media, Track)
                 and not media.video
