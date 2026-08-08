@@ -3,38 +3,78 @@
 # This file is part of ZEFXMusic
 
 
-import pyrogram
 import os
 import time
 import asyncio
+import pyrogram
 from zefron import config, logger
 from zefron.core.database import init_db_pool
 
+DOWNLOAD_RETENTION_SECONDS = 60 * 60
+DOWNLOAD_CLEANUP_INTERVAL = 15 * 60
+
+
+def _protected_downloads() -> set[str]:
+    """Return local media paths still referenced by the playback queue."""
+    protected: set[str] = set()
+    try:
+        # Import lazily because zefron creates Bot before Queue during startup.
+        from zefron import queue
+
+        for items in queue.queues.values():
+            for media in items:
+                path = getattr(media, "file_path", None)
+                if path and not str(path).startswith(("http://", "https://")):
+                    protected.add(os.path.realpath(path))
+    except Exception:
+        # Cleanup must never prevent the bot from booting.
+        pass
+    return protected
+
+
+def cleanup_downloads_once() -> int:
+    """Delete unreferenced downloaded media older than one hour."""
+    downloads_dir = "downloads"
+    if not os.path.isdir(downloads_dir):
+        return 0
+
+    current_time = time.time()
+    protected = _protected_downloads()
+    deleted = 0
+
+    for entry in os.scandir(downloads_dir):
+        if not entry.is_file():
+            continue
+        file_path = entry.path
+        if os.path.realpath(file_path) in protected:
+            continue
+        try:
+            # mtime reflects the last completed download/conversion, unlike
+            # ctime which can change for unrelated filesystem metadata work.
+            if current_time - entry.stat().st_mtime > DOWNLOAD_RETENTION_SECONDS:
+                os.remove(file_path)
+                deleted += 1
+        except FileNotFoundError:
+            pass
+        except OSError as ex:
+            logger.warning("Could not delete old download %s: %s", file_path, ex)
+    return deleted
+
+
 async def auto_clean_downloads():
-    """Background task jo har ghante purane downloaded songs ko delete karta hai okei zefron beta."""
+    """Keep downloaded media for one hour, without interrupting playback."""
     while True:
         try:
-            downloads_dir = "downloads"
-            age_limit = 7200 
-            current_time = time.time()
-            
-            if os.path.exists(downloads_dir):
-                count = 0
-                for file in os.listdir(downloads_dir):
-                    file_path = os.path.join(downloads_dir, file)
-                    if os.path.isfile(file_path):
-                        if (current_time - os.path.getctime(file_path)) > age_limit:
-                            os.remove(file_path)
-                            count += 1
-                
-                if count > 0:
-                    from zefron import logger
-                    logger.info(f"🧹 Storage Saver: Automatically deleted {count} old downloaded songs.")
+            count = await asyncio.to_thread(cleanup_downloads_once)
+            if count > 0:
+                logger.info(
+                    "Storage Saver: automatically deleted %s old download(s).",
+                    count,
+                )
         except Exception as e:
-            from zefron import logger
-            logger.error(f"Cleanup Error: {e}")
-        
-        await asyncio.sleep(3600)
+            logger.error("Cleanup Error: %s", e)
+
+        await asyncio.sleep(DOWNLOAD_CLEANUP_INTERVAL)
 
 class Bot(pyrogram.Client):
     def __init__(self):

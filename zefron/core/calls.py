@@ -357,9 +357,8 @@ class TgCall(PyTgCalls):
         except exceptions.NoAudioSourceFound:
             if generation != self._generation(chat_id):
                 return
-            # Audio's direct source can use the legacy local fallback. Video
-            # must remain ShrutiAPI-only; never silently switch /vplay to a
-            # different provider.
+            # Audio may use the local provider fallback. Video must remain
+            # ShrutiAPI-only; never silently switch /vplay to another provider.
             if await self._recover_shruti_video(
                 chat_id,
                 message,

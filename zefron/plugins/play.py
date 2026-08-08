@@ -153,10 +153,9 @@ async def play_hndlr(
             return
 
     if not file.file_path:
-        # Audio uses the low-latency direct source.  Video must stay on
-        # ShrutiAPI and is returned as a live URL so PyTgCalls can join the
-        # VC and start receiving bytes without waiting for a full MP4
-        # download.
+        # Audio is normalized to a local WAV before playback so CDN jitter
+        # cannot drain the VC input buffer. Video remains a local ShrutiAPI
+        # download because it has different media requirements.
         if not video:
             file.file_path = await yt.direct_stream(file.id)
         else:

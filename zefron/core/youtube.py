@@ -85,6 +85,8 @@ async def _convert_to_wav(mp3_path: str) -> str:
                 "2",
                 "-acodec",
                 "pcm_s16le",
+                "-f",
+                "wav",
                 "-map_metadata",
                 "-1",
                 tmp,
@@ -128,18 +130,6 @@ def _cleanup_wav_cache(keep: int = 25) -> None:
                 pass
     except Exception:
         pass
-
-
-# ── YoutubeAPI (primary audio source) ─────────────────────────────────────
-YOUTUBEAPI_BASE = "https://youtubeapi--urlovsr.replit.app"
-
-
-def _youtubeapi_direct_url(video_id: str) -> str:
-    """Build the live audio endpoint without downloading or probing it."""
-    return (
-        f"{YOUTUBEAPI_BASE}/api/media"
-        f"?url=https://youtu.be/{video_id}&type=audio&quality=360"
-    )
 
 
 # ── ShrutiAPI download helpers ─────────────────────────────────────────────
@@ -481,23 +471,37 @@ class YouTube:
     # ── Download ───────────────────────────────────────────────────────────
 
     async def direct_stream(self, video_id: str) -> str | None:
-        """Return a remote audio stream immediately; never create a local file."""
+        """Return a stable local audio source for uninterrupted VC playback.
+
+        The old implementation returned a live CDN URL immediately. That
+        reduced start latency, but any short network stall drained FFmpeg's
+        input buffer and caused audible gaps in Telegram voice chat. Download
+        and normalize the track before joining the stream instead.
+        """
         if not video_id:
             return None
-        url = _youtubeapi_direct_url(video_id)
-        logger.info("Using direct audio stream: %s", video_id)
-        return url
+        result = await _shruti_download_audio(video_id)
+        if result:
+            logger.info("Using cached 48 kHz audio source: %s", video_id)
+            return result
+
+        # Keep yt-dlp as a local-file fallback. ``direct=False`` skips this
+        # method and avoids recursion through the normal download path.
+        result = await self.download(video_id, video=False, direct=False)
+        if result:
+            logger.info("Using yt-dlp local audio source: %s", video_id)
+        return result
 
     async def download(
         self, video_id: str, video: bool = False, direct: bool = True
     ) -> str | None:
-        # ── Audio fallback: direct stream → local providers ────────────────
+        # ── Audio source: normalized local cache → yt-dlp fallback ─────────
         if not video and direct:
             result = await self.direct_stream(video_id)
             if result:
                 return result
             logger.warning(
-                "Direct audio stream unavailable for %s, trying local fallback",
+                "Primary local audio source unavailable for %s, trying fallback",
                 video_id,
             )
             result = await _shruti_download_audio(video_id)
