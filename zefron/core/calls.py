@@ -245,14 +245,25 @@ class TgCall(PyTgCalls):
             ("http://", "https://")
         )
         if is_radio or is_remote:
-            # YoutubeAPI and radio URLs are live HTTP inputs.  These options
-            # make ffmpeg reconnect instead of ending the Telegram stream on
-            # a short CDN/network interruption.
+            # YoutubeAPI and radio URLs are live HTTP inputs.  Keep a bounded
+            # demuxer queue so short CDN jitter is absorbed without allowing
+            # FFmpeg to grow memory forever.  The audio section also forces
+            # one clean stream and repairs timestamps before PCM conversion.
+            # These options are understood by PyTgCalls 2.3.x. ``--audio``
+            # selects the audio command group and ``---mid`` places options
+            # after the input URL; both markers are consumed by PyTgCalls.
             _ffmpeg = (
                 "-reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 "
                 "-reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
-                "-reconnect_delay_max 5 -rw_timeout 15000000"
+                "-reconnect_delay_max 2 -rw_timeout 20000000 "
+                "-thread_queue_size 4096 -probesize 2M -analyzeduration 2M "
+                "-fflags +discardcorrupt+genpts"
             )
+            if not media.video:
+                _ffmpeg += (
+                    " --audio ---mid -map 0:a:0? -vn "
+                    "-af aresample=async=1:min_hard_comp=0.100:first_pts=0"
+                )
             if seek_time > 1:
                 _ffmpeg = f"-ss {seek_time} {_ffmpeg}"
         elif seek_time > 1:
