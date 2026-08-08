@@ -19,9 +19,10 @@ from zefron.helpers import Track, utils
 
 
 # ── ShrutiMusic API ────────────────────────────────────────────────────────
-SHRUTI_API_URL = "https://api01.shrutibots.site"
-SHRUTI_API_KEY = "ShrutiBotsdZvv4iyovLZxFlVzZhv4"
-SHRUTI_API_KEY2 = "ShrutiBotswVCjLFds5hj34MDSFTxI"  # fallback key
+# Values are configured through ApiUrl/APIKey (or the explicit SHRUTI names).
+SHRUTI_API_URL = config.SHRUTI_API_URL
+SHRUTI_API_KEY = config.SHRUTI_API_KEY
+SHRUTI_API_KEY2 = config.SHRUTI_API_KEY2
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"
@@ -153,7 +154,7 @@ async def _shruti_download_audio(video_id: str) -> str | None:
     # Download MP3 if not cached
     if not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
         downloaded = False
-        for api_key in [SHRUTI_API_KEY, SHRUTI_API_KEY2]:
+        for api_key in filter(None, [SHRUTI_API_KEY, SHRUTI_API_KEY2]):
             if downloaded:
                 break
             for attempt in range(2):
@@ -223,7 +224,7 @@ async def _shruti_download_video(video_id: str) -> str | None:
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
-    for api_key in [SHRUTI_API_KEY, SHRUTI_API_KEY2]:
+    for api_key in filter(None, [SHRUTI_API_KEY, SHRUTI_API_KEY2]):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -252,6 +253,23 @@ async def _shruti_download_video(video_id: str) -> str | None:
                 except Exception:
                     pass
     return None
+
+
+def _shruti_video_stream_url(video_id: str) -> str:
+    """Build ShrutiAPI's direct video source for ffmpeg.
+
+    The endpoint is intentionally passed to PyTgCalls instead of first
+    downloading the complete MP4.  This lets the voice call connect while
+    ShrutiAPI is still delivering the first bytes.
+    """
+    from urllib.parse import urlencode
+
+    if not SHRUTI_API_KEY:
+        return None
+    return (
+        f"{SHRUTI_API_URL}/download?"
+        f"{urlencode({'url': video_id, 'type': 'video', 'api_key': SHRUTI_API_KEY})}"
+    )
 
 
 def _secs_to_str(seconds: int) -> str:
@@ -460,17 +478,16 @@ class YouTube:
                 "ShrutiAPI audio failed for %s, falling back to yt-dlp", video_id
             )
 
-        # ── Video: ShrutiAPI → MP4 ─────────────────────────────────────────
+        # ── Video: direct ShrutiAPI stream ────────────────────────────────
         if video:
-            result = await _shruti_download_video(video_id)
-            if result:
-                logger.info("ShrutiAPI video ready: %s", result)
-                return result
-            logger.warning(
-                "ShrutiAPI video failed for %s, falling back to yt-dlp", video_id
-            )
+            result = _shruti_video_stream_url(video_id)
+            if not result:
+                logger.error("ShrutiAPI key is not configured; cannot play video")
+                return None
+            logger.info("Using direct ShrutiAPI video stream: %s", video_id)
+            return result
 
-        # ── yt-dlp fallback ────────────────────────────────────────────────
+        # ── yt-dlp fallback (audio only) ────────────────────────────────────
         yt_url = self.base + video_id
         ext = "mp4" if video else "webm"
         filename = f"downloads/{video_id}.{ext}"

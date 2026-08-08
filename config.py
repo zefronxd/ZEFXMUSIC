@@ -34,6 +34,16 @@ class Config:
         self.LANG_CODE = getenv("LANG_CODE", "en")
 
         self.ONEGRAB_API_KEY = getenv("ONEGRAB_API_KEY")
+        # ShrutiAPI is the only provider used for /vplay.  Keep its
+        # connection details in environment variables so the API can be
+        # changed without touching the playback code.
+        self.SHRUTI_API_URL = (
+            getenv("ApiUrl")
+            or getenv("SHRUTI_API_URL")
+            or "https://api01.shrutibots.site"
+        )
+        self.SHRUTI_API_KEY = getenv("APIKey") or getenv("SHRUTI_API_KEY")
+        self.SHRUTI_API_KEY2 = getenv("SHRUTI_API_KEY2")
 
         self.LASTFM_API_KEY = getenv("LASTFM_API_KEY", "d983c47914d76833e419d2dd8fdcf4ce")
         self.LASTFM_SHARED_SECRET = getenv("LASTFM_SHARED_SECRET", "b76e8a96fb70385fd2e024a0ac21dbb2")

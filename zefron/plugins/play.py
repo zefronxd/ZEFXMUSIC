@@ -4,7 +4,6 @@
 
 
 import asyncio
-from pathlib import Path
 
 from pyrogram import filters, types
 
@@ -154,13 +153,14 @@ async def play_hndlr(
             return
 
     if not file.file_path:
-        fname = f"downloads/{file.id}.{'mp4' if video else 'webm'}"
+        # Audio uses the low-latency direct source.  Video must stay on
+        # ShrutiAPI and is returned as a live URL so PyTgCalls can join the
+        # VC and start receiving bytes without waiting for a full MP4
+        # download.
         if not video:
             file.file_path = await yt.direct_stream(file.id)
-        elif Path(fname).exists():
-            file.file_path = fname
         else:
-            file.file_path = await yt.download(file.id, video=video)
+            file.file_path = await yt.download(file.id, video=True)
 
     await zefx.play_media(chat_id=m.chat.id, message=sent, media=file)
     if not tracks:

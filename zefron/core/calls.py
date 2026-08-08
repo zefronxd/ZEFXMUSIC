@@ -260,11 +260,12 @@ class TgCall(PyTgCalls):
         except exceptions.NoAudioSourceFound:
             if generation != self._generation(chat_id):
                 return
-            # The direct stream is intentionally tried first for speed.  If a
-            # particular video is unavailable at the provider, retry once
-            # through the local fallback before advancing the queue.
+            # Audio's direct source can use the legacy local fallback. Video
+            # must remain ShrutiAPI-only; never silently switch /vplay to a
+            # different provider.
             if (
                 isinstance(media, Track)
+                and not media.video
                 and isinstance(media.file_path, str)
                 and media.file_path.startswith("https://youtubeapi")
             ):
