@@ -19,14 +19,11 @@ from zefron.helpers import Track, utils
 
 
 # ── ShrutiMusic API ────────────────────────────────────────────────────────
-# Values are configured through ApiUrl/APIKey (or the explicit SHRUTI names).
-SHRUTI_API_URL = config.SHRUTI_API_URL
-SHRUTI_API_KEY = config.SHRUTI_API_KEY
-SHRUTI_API_KEY2 = config.SHRUTI_API_KEY2
-# Keep the keys that shipped with this bot as a last-resort compatibility
-# path.  Some deployments provide a generic APIKey variable that belongs to
-# another service and the Shruti endpoint answers with HTTP 401 for it.
-_LEGACY_SHRUTI_KEYS = (
+# /vplay must always use these Shruti credentials.  Do not read the generic
+# APIKey/ApiUrl environment values here because imported projects may use
+# those names for a different service.
+SHRUTI_API_URL = "https://api01.shrutibots.site"
+SHRUTI_API_KEYS = (
     "ShrutiBotsdZvv4iyovLZxFlVzZhv4",
     "ShrutiBotswVCjLFds5hj34MDSFTxI",
 )
@@ -161,7 +158,7 @@ async def _shruti_download_audio(video_id: str) -> str | None:
     # Download MP3 if not cached
     if not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
         downloaded = False
-        for api_key in filter(None, [SHRUTI_API_KEY, SHRUTI_API_KEY2]):
+        for api_key in SHRUTI_API_KEYS:
             if downloaded:
                 break
             for attempt in range(2):
@@ -231,7 +228,7 @@ async def _shruti_download_video(video_id: str) -> str | None:
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
-    for api_key in _shruti_video_keys():
+    for api_key in SHRUTI_API_KEYS:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -269,18 +266,7 @@ def _shruti_video_keys() -> list[str]:
     is intentionally not treated as a Shruti key for direct video playback.
     An explicit ``SHRUTI_API_KEY`` can still override the compatibility keys.
     """
-    return list(
-        dict.fromkeys(
-            filter(
-                None,
-                [
-                    os.getenv("SHRUTI_API_KEY"),
-                    os.getenv("SHRUTI_API_KEY2"),
-                    *_LEGACY_SHRUTI_KEYS,
-                ],
-            )
-        )
-    )
+    return list(SHRUTI_API_KEYS)
 
 
 def shruti_video_stream_urls(video_id: str) -> list[str]:

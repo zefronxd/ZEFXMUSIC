@@ -202,14 +202,22 @@ class TgCall(PyTgCalls):
         else:
             _ffmpeg = None
 
+        is_video = bool(media.video)
         stream = types.MediaStream(
             media_path=media.file_path,
             audio_parameters=types.AudioQuality.HIGH,
             video_parameters=types.VideoQuality.HD_720p,
-            audio_flags=types.MediaStream.Flags.REQUIRED,
-            video_flags=(
+            # Shruti video responses can be video-only or expose an audio
+            # codec ffmpeg cannot decode. Video playback must not be rejected
+            # as "Audio source unavailable" in either case.
+            audio_flags=(
                 types.MediaStream.Flags.AUTO_DETECT
-                if media.video
+                if is_video
+                else types.MediaStream.Flags.REQUIRED
+            ),
+            video_flags=(
+                types.MediaStream.Flags.REQUIRED
+                if is_video
                 else types.MediaStream.Flags.IGNORE
             ),
             ffmpeg_parameters=_ffmpeg,
@@ -269,7 +277,7 @@ class TgCall(PyTgCalls):
                 and isinstance(media, Track)
                 and isinstance(media.file_path, str)
                 and media.video
-                and media.file_path.startswith(config.SHRUTI_API_URL.rstrip("/") + "/")
+                and media.file_path.startswith("https://api01.shrutibots.site/")
             ):
                 # A Shruti key can be temporarily rate-limited. Retry with
                 # another Shruti key only; /vplay must never switch provider.
