@@ -23,6 +23,13 @@ from zefron.helpers import Track, utils
 SHRUTI_API_URL = config.SHRUTI_API_URL
 SHRUTI_API_KEY = config.SHRUTI_API_KEY
 SHRUTI_API_KEY2 = config.SHRUTI_API_KEY2
+# Keep the keys that shipped with this bot as a last-resort compatibility
+# path.  Some deployments provide a generic APIKey variable that belongs to
+# another service and the Shruti endpoint answers with HTTP 401 for it.
+_LEGACY_SHRUTI_KEYS = (
+    "ShrutiBotsdZvv4iyovLZxFlVzZhv4",
+    "ShrutiBotswVCjLFds5hj34MDSFTxI",
+)
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"
@@ -224,7 +231,7 @@ async def _shruti_download_video(video_id: str) -> str | None:
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
-    for api_key in filter(None, [SHRUTI_API_KEY, SHRUTI_API_KEY2]):
+    for api_key in _shruti_video_keys():
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -255,8 +262,29 @@ async def _shruti_download_video(video_id: str) -> str | None:
     return None
 
 
-def _shruti_video_stream_url(video_id: str) -> str:
-    """Build ShrutiAPI's direct video source for ffmpeg.
+def _shruti_video_keys() -> list[str]:
+    """Return distinct Shruti keys in preferred order.
+
+    ``APIKey`` is used by some imported projects for another service, so it
+    is intentionally not treated as a Shruti key for direct video playback.
+    An explicit ``SHRUTI_API_KEY`` can still override the compatibility keys.
+    """
+    return list(
+        dict.fromkeys(
+            filter(
+                None,
+                [
+                    os.getenv("SHRUTI_API_KEY"),
+                    os.getenv("SHRUTI_API_KEY2"),
+                    *_LEGACY_SHRUTI_KEYS,
+                ],
+            )
+        )
+    )
+
+
+def shruti_video_stream_urls(video_id: str) -> list[str]:
+    """Build direct ShrutiAPI video sources for ffmpeg.
 
     The endpoint is intentionally passed to PyTgCalls instead of first
     downloading the complete MP4.  This lets the voice call connect while
@@ -264,12 +292,17 @@ def _shruti_video_stream_url(video_id: str) -> str:
     """
     from urllib.parse import urlencode
 
-    if not SHRUTI_API_KEY:
-        return None
-    return (
+    return [
         f"{SHRUTI_API_URL}/download?"
-        f"{urlencode({'url': video_id, 'type': 'video', 'api_key': SHRUTI_API_KEY})}"
-    )
+        f"{urlencode({'url': video_id, 'type': 'video', 'api_key': api_key})}"
+        for api_key in _shruti_video_keys()
+    ]
+
+
+def _shruti_video_stream_url(video_id: str) -> str:
+    """Return the first direct ShrutiAPI video source."""
+    urls = shruti_video_stream_urls(video_id)
+    return urls[0] if urls else None
 
 
 def _secs_to_str(seconds: int) -> str:
@@ -480,11 +513,20 @@ class YouTube:
 
         # ── Video: direct ShrutiAPI stream ────────────────────────────────
         if video:
-            result = _shruti_video_stream_url(video_id)
-            if not result:
+            if direct:
+                result = _shruti_video_stream_url(video_id)
+                if result:
+                    logger.info("Using direct ShrutiAPI video stream: %s", video_id)
+                    return result
                 logger.error("ShrutiAPI key is not configured; cannot play video")
                 return None
-            logger.info("Using direct ShrutiAPI video stream: %s", video_id)
+
+            # Direct streaming already failed. Keep the fallback on
+            # ShrutiAPI, but materialize a local MP4 so ffmpeg does not have
+            # to parse the provider's live response again.
+            result = await _shruti_download_video(video_id)
+            if result:
+                logger.info("ShrutiAPI video fallback ready: %s", video_id)
             return result
 
         # ── yt-dlp fallback (audio only) ────────────────────────────────────

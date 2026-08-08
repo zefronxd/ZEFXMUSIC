@@ -167,6 +167,7 @@ class TgCall(PyTgCalls):
         message: Message,
         media: Media | Track,
         seek_time: int = 0,
+        allow_shruti_retry: bool = True,
     ) -> None:
         # Language is only needed for UI/error messages.  Resolve the
         # assistant first so a cold chat does not wait on two database lookups
@@ -263,6 +264,51 @@ class TgCall(PyTgCalls):
             # Audio's direct source can use the legacy local fallback. Video
             # must remain ShrutiAPI-only; never silently switch /vplay to a
             # different provider.
+            if (
+                allow_shruti_retry
+                and isinstance(media, Track)
+                and isinstance(media.file_path, str)
+                and media.video
+                and media.file_path.startswith(config.SHRUTI_API_URL.rstrip("/") + "/")
+            ):
+                # A Shruti key can be temporarily rate-limited. Retry with
+                # another Shruti key only; /vplay must never switch provider.
+                from zefron.core.youtube import shruti_video_stream_urls
+
+                current_path = media.file_path
+                for candidate in shruti_video_stream_urls(media.id):
+                    if candidate == current_path:
+                        continue
+                    logger.warning(
+                        "ShrutiAPI video source rejected for %s; retrying Shruti key",
+                        media.id,
+                    )
+                    media.file_path = candidate
+                    return await self.play_media(
+                        chat_id,
+                        message,
+                        media,
+                        seek_time,
+                        allow_shruti_retry=False,
+                    )
+                # If all direct Shruti sources are unavailable (for example
+                # a temporary provider rate limit), use Shruti's MP4
+                # download endpoint instead of silently skipping the track.
+                logger.warning(
+                    "Direct ShrutiAPI video failed for %s; downloading via ShrutiAPI",
+                    media.id,
+                )
+                media.file_path = await yt.download(
+                    media.id, video=True, direct=False
+                )
+                if media.file_path:
+                    return await self.play_media(
+                        chat_id,
+                        message,
+                        media,
+                        seek_time,
+                        allow_shruti_retry=False,
+                    )
             if (
                 isinstance(media, Track)
                 and not media.video
