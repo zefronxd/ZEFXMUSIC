@@ -1,2 +1,0 @@
-- [Voice playback latency](voice-playback-latency.md) — start remote audio before UI decoration or logging; keep those operations cancellable/backgrounded.
-- [Telegram VC FFmpeg tuning](telegram-vc-ffmpeg-tuning.md) — bound remote input jitter and normalize every music stream to explicit 48 kHz stereo PCM.
