@@ -2,23 +2,26 @@
 # Licensed under the MIT License.
 # This file is part of ZEFXMusic
 
-import re
 import asyncio
+import re
+import time
+
 import aiohttp
 
-from zefron import logger
+from zefron import config, logger
 from zefron.helpers._dataclass import Track
 
-# ── OneGrab (hardcoded for Spotify resolution only) ────────────────────────
-_ONEGRAB_BASE = "https://api.onegrab.fun"
-_ONEGRAB_KEYS = [
-    "4f7c3a_jTyyRH8d0901mVRCL9363aeHkVERtycg",   # primary
-    "d96384_tFt_LWW7flVH7Vq4ssBHPTSXHgMuvT3J",   # fallback 1
-    "96892c_trF-NQn3IxkFcO7269t_oYmT8PWDHFTC",   # fallback 2
-]
-_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
-# ── Regex ──────────────────────────────────────────────────────────────────
+# Spotify Web API Client Credentials flow. Credentials are read from the
+# environment and never stored in this source file.
+_SPOTIFY_ACCOUNTS = "https://accounts.spotify.com"
+_SPOTIFY_API = "https://api.spotify.com/v1"
+_TIMEOUT = aiohttp.ClientTimeout(total=15)
+_token_lock = asyncio.Lock()
+_access_token: str | None = None
+_token_expires_at = 0.0
+
+
 SPOTIFY_REGEX = re.compile(
     r"https?://open\.spotify\.com/"
     r"(?:intl-[a-z]+/)?"
@@ -27,8 +30,6 @@ SPOTIFY_REGEX = re.compile(
     r"|spotify:(track|playlist|album|episode):([A-Za-z0-9]+)"
 )
 
-
-# ── Public helpers ─────────────────────────────────────────────────────────
 
 def is_spotify(url: str) -> bool:
     return bool(SPOTIFY_REGEX.search(url))
@@ -42,56 +43,217 @@ def is_spotify_playlist(url: str) -> bool:
 
 
 def _sp_cache_key(url: str) -> str | None:
-    """Return a stable MongoDB cache key like 'playlist:37i9dQZF1DX...' from a Spotify URL."""
-    m = SPOTIFY_REGEX.search(url)
-    if not m:
+    """Return a versioned cache key for official Spotify collection metadata."""
+    match = SPOTIFY_REGEX.search(url)
+    if not match:
         return None
-    kind = m.group(1) or m.group(3)
-    sid  = m.group(2) or m.group(4)
-    if kind in ("playlist", "album") and sid:
-        return f"{kind}:{sid}"
+    kind = match.group(1) or match.group(3)
+    spotify_id = match.group(2) or match.group(4)
+    if kind in ("playlist", "album") and spotify_id:
+        return f"spotify-api-v1:{kind}:{spotify_id}"
     return None
 
 
-# ── OneGrab metadata fetch ─────────────────────────────────────────────────
+async def _get_access_token() -> str | None:
+    """Get and cache an app-only Spotify access token."""
+    global _access_token, _token_expires_at
+
+    client_id = config.SPOTIFY_CLIENT_ID
+    client_secret = config.SPOTIFY_CLIENT_SECRET
+    if not client_id or not client_secret:
+        logger.warning(
+            "Spotify API credentials missing; set SPOTIFY_CLIENT_ID and "
+            "SPOTIFY_CLIENT_SECRET"
+        )
+        return None
+
+    if _access_token and time.monotonic() < _token_expires_at - 30:
+        return _access_token
+
+    async with _token_lock:
+        if _access_token and time.monotonic() < _token_expires_at - 30:
+            return _access_token
+        try:
+            async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+                async with session.post(
+                    f"{_SPOTIFY_ACCOUNTS}/api/token",
+                    auth=aiohttp.BasicAuth(client_id, client_secret),
+                    data={"grant_type": "client_credentials"},
+                ) as response:
+                    if response.status != 200:
+                        logger.warning(
+                            "Spotify token request failed: HTTP %s",
+                            response.status,
+                        )
+                        return None
+                    data = await response.json(content_type=None)
+        except Exception as ex:
+            logger.warning("Spotify token request failed: %s", ex)
+            return None
+
+        _access_token = data.get("access_token")
+        _token_expires_at = time.monotonic() + int(data.get("expires_in", 3600))
+        return _access_token
+
+
+async def _spotify_get(
+    path: str,
+    params: dict | None = None,
+    retry_on_unauthorized: bool = True,
+) -> dict | None:
+    """GET a Spotify Web API resource, refreshing the token once on 401."""
+    global _access_token, _token_expires_at
+
+    token = await _get_access_token()
+    if not token:
+        return None
+
+    try:
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+            async with session.get(
+                f"{_SPOTIFY_API}{path}",
+                params=params or {},
+                headers={"Authorization": f"Bearer {token}"},
+            ) as response:
+                if response.status == 401 and retry_on_unauthorized:
+                    _access_token = None
+                    _token_expires_at = 0
+                    return await _spotify_get(
+                        path, params, retry_on_unauthorized=False
+                    )
+                if response.status != 200:
+                    logger.warning(
+                        "Spotify API %s failed: HTTP %s", path, response.status
+                    )
+                    return None
+                return await response.json(content_type=None)
+    except Exception as ex:
+        logger.warning("Spotify API %s failed: %s", path, ex)
+        return None
+
+
+def _track_item(item: dict, album: dict | None = None) -> dict | None:
+    """Convert a Spotify track object to the metadata used by playback."""
+    if not item or item.get("is_local"):
+        return None
+
+    track_id = item.get("id")
+    title = (item.get("name") or "").strip()
+    if not track_id or not title:
+        return None
+
+    artists = item.get("artists") or []
+    artist = ", ".join(
+        artist.get("name", "").strip()
+        for artist in artists
+        if artist.get("name")
+    )
+    album_data = album or item.get("album") or {}
+    images = album_data.get("images") or []
+    spotify_url = (item.get("external_urls") or {}).get(
+        "spotify", f"spotify:track:{track_id}"
+    )
+    return {
+        "title": title,
+        "channel": artist,
+        "url": spotify_url,
+        "thumbnail": images[0].get("url", "") if images else "",
+        "duration": int(item.get("duration_ms") or 0) // 1000,
+    }
+
+
+def _episode_item(item: dict) -> dict | None:
+    """Convert a Spotify episode to the same searchable metadata shape."""
+    episode_id = item.get("id")
+    title = (item.get("name") or "").strip()
+    if not episode_id or not title:
+        return None
+
+    show = item.get("show") or {}
+    images = show.get("images") or []
+    spotify_url = (item.get("external_urls") or {}).get(
+        "spotify", f"spotify:episode:{episode_id}"
+    )
+    return {
+        "title": title,
+        "channel": (show.get("publisher") or "").strip(),
+        "url": spotify_url,
+        "thumbnail": images[0].get("url", "") if images else "",
+        "duration": int(item.get("duration_ms") or 0) // 1000,
+    }
+
+
+async def _fetch_collection_meta(spotify_url: str) -> list[dict]:
+    """Fetch public playlist or album tracks from the Spotify Web API."""
+    match = SPOTIFY_REGEX.search(spotify_url)
+    if not match:
+        return []
+
+    kind = match.group(1) or match.group(3)
+    spotify_id = match.group(2) or match.group(4)
+    if kind == "playlist":
+        data = await _spotify_get(
+            f"/playlists/{spotify_id}/tracks",
+            {
+                "limit": 100,
+                "fields": (
+                    "items(track(id,name,is_local,duration_ms,artists(name),"
+                    "album(images),external_urls.spotify))"
+                ),
+            },
+        )
+        entries = data.get("items", []) if data else []
+        return [
+            metadata
+            for entry in entries
+            if (metadata := _track_item(entry.get("track")))
+        ]
+
+    data = await _spotify_get(f"/albums/{spotify_id}")
+    if not data:
+        return []
+    album = {"images": data.get("images") or []}
+    return [
+        metadata
+        for item in (data.get("tracks") or {}).get("items", [])
+        if (metadata := _track_item(item, album))
+    ]
+
 
 async def _fetch_meta(spotify_url: str) -> list[dict]:
-    """
-    Call OneGrab /api/get_url with Spotify URL.
-    Tries each key in _ONEGRAB_KEYS until one succeeds.
-    For a track → 1 item.  For a playlist → up to 50 items.
-    """
-    async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-        for i, key in enumerate(_ONEGRAB_KEYS, 1):
-            try:
-                async with session.get(
-                    f"{_ONEGRAB_BASE}/api/get_url",
-                    params={"url": spotify_url, "api_key": key},
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        results = data.get("results", [])
-                        if results:
-                            if i > 1:
-                                logger.info("OneGrab Spotify: key %d succeeded", i)
-                            return results
-                    logger.warning("OneGrab Spotify key %d → HTTP %s", i, resp.status)
-            except Exception as e:
-                logger.warning("OneGrab Spotify key %d failed: %s", i, e)
-    return []
+    """Fetch Spotify track, episode, playlist, or album metadata officially."""
+    match = SPOTIFY_REGEX.search(spotify_url)
+    if not match:
+        return []
+
+    kind = match.group(1) or match.group(3)
+    spotify_id = match.group(2) or match.group(4)
+    if kind in ("playlist", "album"):
+        return await _fetch_collection_meta(spotify_url)
+
+    data = await _spotify_get(f"/{kind}s/{spotify_id}")
+    if not data:
+        return []
+    item = _episode_item(data) if kind == "episode" else _track_item(data)
+    return [item] if item else []
 
 
-# ── Internal: resolve one Spotify result → YouTube Track ──────────────────
+async def _resolve_one(
+    item: dict,
+    m_id: int,
+    video: bool,
+    yt_instance,
+) -> Track | None:
+    """
+    Resolve Spotify metadata to a downloadable YouTube track.
 
-async def _resolve_one(item: dict, m_id: int, video: bool, yt_instance) -> Track | None:
+    Spotify's Web API provides metadata but not a playable audio URL. The
+    existing YouTube search/download path is therefore used only to obtain
+    playable audio after Spotify has identified the track.
     """
-    Take a Spotify metadata dict (title + channel/artist from OneGrab)
-    and find the matching YouTube track via search.
-    Keeps Spotify thumbnail and duration for display.
-    """
-    title   = (item.get("title") or "").strip()
-    artist  = (item.get("channel") or "").strip()
-    query   = f"{title} {artist}".strip() if artist else title
+    title = (item.get("title") or "").strip()
+    artist = (item.get("channel") or "").strip()
+    query = f"{title} {artist}".strip() if artist else title
     if not query:
         return None
 
@@ -99,33 +261,34 @@ async def _resolve_one(item: dict, m_id: int, video: bool, yt_instance) -> Track
     if not yt_track:
         return None
 
-    # Show Spotify URL in Now Playing (id stays as YouTube ID for download)
-    sp_url = (item.get("url") or "").strip()
-    if sp_url and "spotify.com" in sp_url:
-        yt_track.url = sp_url
+    spotify_url = (item.get("url") or "").strip()
+    if spotify_url and "spotify.com" in spotify_url:
+        yt_track.url = spotify_url
 
-    # Prefer Spotify thumbnail (higher quality, no letterbox)
-    sp_thumb = (item.get("thumbnail") or "").split("?")[0]
-    if sp_thumb:
-        yt_track.thumbnail = sp_thumb
+    spotify_thumbnail = (item.get("thumbnail") or "").split("?")[0]
+    if spotify_thumbnail:
+        yt_track.thumbnail = spotify_thumbnail
 
-    # Use Spotify duration if YouTube search returned 0
     if not yt_track.duration_sec and item.get("duration"):
         from zefron.core.youtube import _secs_to_str
-        dur_sec = int(item["duration"])
-        yt_track.duration_sec = dur_sec
-        yt_track.duration     = _secs_to_str(dur_sec)
+
+        duration = int(item["duration"])
+        yt_track.duration_sec = duration
+        yt_track.duration = _secs_to_str(duration)
 
     return yt_track
 
 
-# ── Public API ─────────────────────────────────────────────────────────────
-
-async def spotify_track(url: str, m_id: int, video: bool, yt_instance) -> Track | None:
-    """Resolve a single Spotify track URL → YouTube Track."""
+async def spotify_track(
+    url: str,
+    m_id: int,
+    video: bool,
+    yt_instance,
+) -> Track | None:
+    """Resolve one Spotify track or episode URL to a playable track."""
     results = await _fetch_meta(url)
     if not results:
-        logger.warning("Spotify track: no metadata from OneGrab for %s", url)
+        logger.warning("Spotify track: no metadata for %s", url)
         return None
 
     track = await _resolve_one(results[0], m_id, video, yt_instance)
@@ -135,57 +298,64 @@ async def spotify_track(url: str, m_id: int, video: bool, yt_instance) -> Track 
 
 
 async def spotify_playlist(
-    url: str, limit: int, user: str, video: bool, yt_instance
+    url: str,
+    limit: int,
+    user: str,
+    video: bool,
+    yt_instance,
 ) -> list[Track]:
     """
-    Resolve a Spotify playlist/album → list[Track] (YouTube-downloadable).
-    OneGrab returns up to 50 tracks; we cap at `limit`.
+    Resolve a Spotify playlist/album to YouTube-downloadable tracks.
 
-    Cache strategy:
-    - First check MongoDB (7-day TTL) using playlist/album ID as key.
-    - On cache miss: fetch from OneGrab, then save raw results to MongoDB.
-    - YouTube resolution (search) always runs fresh — only the OneGrab
-      metadata (title, artist, thumbnail, duration) is cached.
+    Spotify metadata is cached for seven days; playable audio resolution still
+    runs fresh so stale media URLs are never persisted.
     """
     from zefron import db as mongo
 
     cache_key = _sp_cache_key(url)
-
-    # ── 1. Cache lookup ────────────────────────────────────────────────────
     raw_results: list[dict] | None = None
     if cache_key:
         raw_results = await mongo.get_spotify_cache(cache_key)
         if raw_results:
-            logger.info("Spotify cache hit: %s (%d tracks)", cache_key, len(raw_results))
+            logger.info(
+                "Spotify cache hit: %s (%d tracks)",
+                cache_key,
+                len(raw_results),
+            )
 
-    # ── 2. Cache miss → call OneGrab ──────────────────────────────────────
     if not raw_results:
         raw_results = await _fetch_meta(url)
         if not raw_results:
-            logger.warning("Spotify playlist: no metadata from OneGrab for %s", url)
+            logger.warning("Spotify playlist: no metadata for %s", url)
             return []
         if cache_key:
             await mongo.set_spotify_cache(cache_key, raw_results)
-            logger.info("Spotify cache saved: %s (%d tracks)", cache_key, len(raw_results))
+            logger.info(
+                "Spotify cache saved: %s (%d tracks)",
+                cache_key,
+                len(raw_results),
+            )
 
-    # ── 3. Resolve metadata → YouTube Tracks ──────────────────────────────
     results = raw_results[:limit]
     tracks: list[Track] = []
 
     async def _resolve(item: dict) -> Track | None:
-        t = await _resolve_one(item, 0, video, yt_instance)
-        if t:
-            t.user = user
-        return t
+        track = await _resolve_one(item, 0, video, yt_instance)
+        if track:
+            track.user = user
+        return track
 
-    # Concurrent resolution in batches of 5
     batch_size = 5
-    for i in range(0, len(results), batch_size):
-        batch   = results[i: i + batch_size]
+    for index in range(0, len(results), batch_size):
+        batch = results[index : index + batch_size]
         settled = await asyncio.gather(*[_resolve(item) for item in batch])
-        tracks.extend(t for t in settled if t)
-        if i + batch_size < len(results):
+        tracks.extend(track for track in settled if track)
+        if index + batch_size < len(results):
             await asyncio.sleep(0.3)
 
-    logger.info("Spotify playlist resolved %d/%d tracks", len(tracks), len(results))
+    logger.info(
+        "Spotify playlist resolved %d/%d tracks",
+        len(tracks),
+        len(results),
+    )
     return tracks

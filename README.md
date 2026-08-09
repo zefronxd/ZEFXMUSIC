@@ -87,7 +87,9 @@ SESSION=BQgfh...AA
 | `START_IMG` | ❌ | — | Start message image URL |
 | `PING_IMG` | ❌ | — | Ping message image URL |
 | `DEFAULT_THUMB` | ❌ | — | Default thumbnail image URL |
-| `ONEGRAB_API_KEY` | ❌ | — | OneGrab API key for Spotify/Apple Music |
+| `ONEGRAB_API_KEY` | ❌ | — | Legacy search API key for non-Spotify fallback |
+| `SPOTIFY_CLIENT_ID` | ❌* | — | Spotify Developer app client ID |
+| `SPOTIFY_CLIENT_SECRET` | ❌* | — | Spotify Developer app client secret |
 
 ---
 

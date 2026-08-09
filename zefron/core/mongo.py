@@ -457,11 +457,11 @@ class MongoDB:
             ])
         return self.users
 
-    # SPOTIFY PLAYLIST CACHE
+    # SPOTIFY PLAYLIST CACHE (official Web API metadata)
     _SP_TTL = 7 * 86400  # 7 days
 
     async def get_spotify_cache(self, spotify_id: str) -> list[dict] | None:
-        """Return cached OneGrab results for a Spotify playlist/album, or None if missing/stale."""
+        """Return cached Spotify metadata for a playlist/album, or None if stale."""
         doc = await self.spotify_cachedb.find_one({"_id": spotify_id})
         if not doc:
             return None
@@ -470,7 +470,7 @@ class MongoDB:
         return doc.get("tracks") or None
 
     async def set_spotify_cache(self, spotify_id: str, tracks: list[dict]) -> None:
-        """Upsert OneGrab results for a Spotify playlist/album with current timestamp."""
+        """Upsert Spotify metadata for a playlist/album with current timestamp."""
         await self.spotify_cachedb.update_one(
             {"_id": spotify_id},
             {"$set": {"tracks": tracks, "cached_at": time()}},

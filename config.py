@@ -38,6 +38,11 @@ class Config:
 
         self.LANG_CODE = getenv("LANG_CODE", "en")
 
+        # Spotify Web API Client Credentials flow. Keep both values in
+        # Replit Secrets/environment variables; never hardcode credentials.
+        self.SPOTIFY_CLIENT_ID = getenv("SPOTIFY_CLIENT_ID")
+        self.SPOTIFY_CLIENT_SECRET = getenv("SPOTIFY_CLIENT_SECRET")
+        # Kept for the non-Spotify search fallback used by older imports.
         self.ONEGRAB_API_KEY = getenv("ONEGRAB_API_KEY")
         # ShrutiAPI is the only provider used for /vplay.  Keep its
         # connection details in environment variables so the API can be
