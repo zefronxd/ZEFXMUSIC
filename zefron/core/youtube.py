@@ -30,7 +30,7 @@ SHRUTI_API_KEYS = (
 
 # Audio provider order is intentional: youtubeapi first, ShrutiBot second.
 # The youtubeapi endpoint returns the media bytes directly.
-YOUTUBE_API_MEDIA_URL = "https://youtubeapi--urlovsr.replit.app/api/media"
+YOUTUBE_API_MEDIA_URL = "https://youtubeapi-production-819a.up.railway.app/api/media"
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"

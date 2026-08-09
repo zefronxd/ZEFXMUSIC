@@ -1,0 +1,1 @@
+- [Radio stream verification](radio-stream-verification.md) — Probe public radio URLs before shipping; directory-listed endpoints can be dead while Zeno direct streams expose live MPEG metadata.

@@ -146,6 +146,8 @@ docker run --env-file .env zefxmusic
 | `/seek [seconds]` | Seek to position |
 | `/queue` | Show current queue |
 | `/loop` | Toggle loop mode |
+| `/radio punjabi` | Play Punjabi new-hits radio from a direct live stream |
+| `/radio status` | Show the active radio source and reconnect status |
 | `/ping` | Check bot latency |
 
 ---

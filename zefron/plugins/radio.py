@@ -3,6 +3,7 @@
 # This file is part of ZEFXMusic
 
 import re
+from html import escape
 
 from pyrogram import filters, types
 
@@ -29,8 +30,10 @@ RADIO_STATIONS: dict[str, str] = {
     "air":         "http://air.pc.cdn.bitgravity.com/air/live/pbaudio001/chunklist.m3u8",
     # ── Regional / International ──────────────────────────────────────────
     # These are direct radio streams, just like the Bollywood stations above.
-    # Punjabi Radio (Zeno FM) — verified direct MPEG audio endpoint.
-    "punjabi":     "https://stream.zeno.fm/0qngk9tcpxhvv",
+    # Punjabi Virsa — verified direct Zeno FM MPEG endpoint. This intentionally
+    # does not use YouTube or a playlist URL, so the station can rotate songs
+    # independently and keep playing when the bot is left in a voice chat.
+    "punjabi":     "https://stream.zeno.fm/1mwx0wv629duv",
     "haryanvi":    "https://stream.zeno.fm/ryektectsf9uv",
     "english":     "https://media-ssl.musicradio.com/CapitalUK",
     "rajasthani":  "https://streamasiacdn.atc-labs.com/jaipurradio.aac",
@@ -39,9 +42,13 @@ RADIO_STATIONS: dict[str, str] = {
 RADIO_STATION_ALIASES = {
     "haryani": "haryanvi",
     "rajashtani": "rajasthani",
+    "virsa": "punjabi",
+    "punjabivirsa": "punjabi",
+    "punjabi_new": "punjabi",
+    "punjabinew": "punjabi",
 }
 RADIO_STATION_LABELS = {
-    "punjabi": "Punjabi Radio",
+    "punjabi": "Punjabi New Hits (Punjabi Virsa)",
     "haryanvi": "Haryanvi Hits (Zeno FM)",
     "english": "English",
     "rajasthani": "Rajasthani",
@@ -71,6 +78,30 @@ def _resolve_station(query: str) -> tuple[str, str] | tuple[None, None]:
     return None, None
 
 
+async def _reply_radio_status(m: types.Message) -> None:
+    """Show the active radio source without exposing playback internals."""
+    media = queue.get_current(m.chat.id)
+    if not media or not getattr(media, "radio", False):
+        return await m.reply_text(
+            "📻 <b>No radio is playing.</b>\n\n"
+            "Start one with <code>/radio punjabi</code>."
+        )
+
+    # ``media.time`` is maintained by the existing playback timer. For a live
+    # stream it represents time since the last successful connection.
+    connected_for = max(int(getattr(media, "time", 0) or 0), 0)
+    minutes, seconds = divmod(connected_for, 60)
+    source = escape(str(media.url or "direct stream"))
+    return await m.reply_text(
+        "📻 <b>Radio Status</b>\n\n"
+        f"🎵 <b>{escape(media.title or 'Live Radio')}</b>\n"
+        f"🌐 <code>{source}</code>\n"
+        f"⏱ Connected: <code>{minutes:02d}:{seconds:02d}</code>\n"
+        "🔁 Auto-reconnect: <b>ON</b>\n"
+        "▶️ Source: <b>Direct radio stream</b> (no YouTube)"
+    )
+
+
 @app.on_message(
     filters.command(["radio", "vradio"])
     & filters.group
@@ -85,6 +116,9 @@ async def radio_hndlr(_, m: types.Message) -> None:
         return await m.reply_text(m.lang["radio_usage"].format(stations))
 
     query = " ".join(m.command[1:]).strip()
+
+    if query.lower() in {"status", "now", "nowplaying", "info"}:
+        return await _reply_radio_status(m)
 
     station_name, stream_url = _resolve_station(query)
 
@@ -122,3 +156,13 @@ async def radio_hndlr(_, m: types.Message) -> None:
 
     queue.add(m.chat.id, media)
     await zefx.play_media(chat_id=m.chat.id, message=sent, media=media)
+
+
+@app.on_message(
+    filters.command(["radiostatus", "radioinfo"])
+    & filters.group
+    & ~app.bl_users
+)
+@lang.language()
+async def radio_status_hndlr(_, m: types.Message) -> None:
+    await _reply_radio_status(m)
