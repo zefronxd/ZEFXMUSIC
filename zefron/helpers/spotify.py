@@ -296,7 +296,7 @@ def _episode_item(item: dict) -> dict | None:
 
 
 async def _fetch_collection_meta(spotify_url: str) -> list[dict]:
-    """Fetch every public playlist or album track from the Spotify Web API."""
+    """Fetch every public Spotify playlist or album track."""
     match = SPOTIFY_REGEX.search(spotify_url)
     if not match:
         return []
@@ -304,16 +304,10 @@ async def _fetch_collection_meta(spotify_url: str) -> list[dict]:
     kind = match.group(1) or match.group(3)
     spotify_id = match.group(2) or match.group(4)
     if kind == "playlist":
-        path = f"/playlists/{spotify_id}/tracks"
-        params = {
-            "limit": 100,
-            "offset": 0,
-            "fields": (
-                "items(track(id,name,is_local,duration_ms,artists(name),"
-                "album(images),external_urls.spotify)),next"
-            ),
-        }
-        album = None
+        # Spotify consistently returns 403 for playlist tracks in this
+        # environment. Use the public embed data directly instead of making a
+        # request that can only produce a noisy warning and no metadata.
+        return await _fetch_public_meta(kind, spotify_id, spotify_url)
     else:
         data = await _spotify_get(f"/albums/{spotify_id}")
         if not data:

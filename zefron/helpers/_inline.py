@@ -124,11 +124,12 @@ class Inline:
         ]])
 
     def queue_markup(
-        self, chat_id: int, _text: str, playing: bool
+        self, chat_id: int, _text: str, playing: bool, page: int = 0,
+        total_pages: int = 1
     ) -> types.InlineKeyboardMarkup:
         _action = "pause" if playing else "resume"
         _style = enums.ButtonStyle.PRIMARY if playing else enums.ButtonStyle.SUCCESS
-        return self.ikm([
+        rows = [
             [
                 self.ikb(text="▶ ᴘʟᴀʏ ɴᴏᴡ ", callback_data=f"controls resume {chat_id} q", style=enums.ButtonStyle.SUCCESS),
                 self.ikb(text="☘️ ᴀᴅᴅ ᴛᴏ ꜰᴀᴠ", callback_data=f"fav_toggle {chat_id}", style=enums.ButtonStyle.DANGER),
@@ -136,7 +137,66 @@ class Inline:
             [
                 self.ikb(text=_text, callback_data=f"controls {_action} {chat_id} q", style=_style)
             ],
-        ])
+        ]
+        if total_pages > 1:
+            rows.append([
+                self.ikb(
+                    text="◀ Previous",
+                    callback_data=f"queue_page {chat_id} {page - 1}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ) if page > 0 else self.ikb(
+                    text="·",
+                    callback_data=f"queue_page {chat_id} {page}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ),
+                self.ikb(
+                    text=f"{page + 1}/{total_pages}",
+                    callback_data=f"queue_page {chat_id} {page}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ),
+                self.ikb(
+                    text="Next ▶",
+                    callback_data=f"queue_page {chat_id} {page + 1}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ) if page < total_pages - 1 else self.ikb(
+                    text="·",
+                    callback_data=f"queue_page {chat_id} {page}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ),
+            ])
+        return self.ikm(rows)
+
+    def playlist_pages(
+        self, chat_id: int, message_id: int, page: int, total_pages: int
+    ) -> types.InlineKeyboardMarkup:
+        rows = []
+        if total_pages > 1:
+            rows.append([
+                self.ikb(
+                    text="◀ Previous",
+                    callback_data=f"playlist_page {chat_id} {message_id} {page - 1}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ) if page > 0 else self.ikb(
+                    text="·",
+                    callback_data=f"playlist_page {chat_id} {message_id} {page}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ),
+                self.ikb(
+                    text=f"{page + 1}/{total_pages}",
+                    callback_data=f"playlist_page {chat_id} {message_id} {page}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ),
+                self.ikb(
+                    text="Next ▶",
+                    callback_data=f"playlist_page {chat_id} {message_id} {page + 1}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ) if page < total_pages - 1 else self.ikb(
+                    text="·",
+                    callback_data=f"playlist_page {chat_id} {message_id} {page}",
+                    style=enums.ButtonStyle.PRIMARY,
+                ),
+            ])
+        return self.ikm(rows)
 
     def settings_markup(
         self, lang: dict, admin_only: bool, cmd_delete: bool, language: str, chat_id: int

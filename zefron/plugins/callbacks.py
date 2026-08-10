@@ -12,6 +12,8 @@ import asyncio
 from zefron import zefx, app, config, db, lang, queue, tg, yt
 from zefron.helpers import Track, admin_check, buttons, can_manage_vc
 from zefron.helpers import recommend
+from zefron.helpers._playlist import get as get_playlist
+from zefron.helpers._queue_view import page_count, playlist_page_text, queue_page_text
 from zefron.helpers.recommend import fetch_and_cache
 
 
@@ -20,6 +22,53 @@ from zefron.helpers.recommend import fetch_and_cache
 async def cancel_dl(_, query: types.CallbackQuery):
     await query.answer()
     await tg.cancel(query)
+
+
+@app.on_callback_query(filters.regex(r"^playlist_page ") & ~app.bl_users)
+@lang.language()
+async def _playlist_page(_, query: types.CallbackQuery):
+    """Show the selected 20-track page from a playlist result."""
+    parts = query.data.split()
+    chat_id, message_id, page = map(int, parts[1:4])
+    items = get_playlist(chat_id, message_id)
+    if items is None:
+        return await query.answer("Playlist list expired. Use /play again.", show_alert=True)
+
+    total_pages = page_count(len(items))
+    page = max(0, min(page, total_pages - 1))
+    await query.edit_message_text(
+        playlist_page_text(query.lang, len(items), items, page),
+        reply_markup=buttons.playlist_pages(
+            chat_id, message_id, page, total_pages
+        ),
+    )
+    await query.answer()
+
+
+@app.on_callback_query(filters.regex(r"^queue_page ") & ~app.bl_users)
+@lang.language()
+async def _queue_page(_, query: types.CallbackQuery):
+    """Show a 20-track page of the live queue."""
+    parts = query.data.split()
+    chat_id, page = int(parts[1]), int(parts[2])
+    items = queue.get_queue(chat_id)
+    if not items:
+        return await query.answer("Queue is empty.", show_alert=True)
+
+    total_pages = page_count(max(1, len(items) - 1))
+    page = max(0, min(page, total_pages - 1))
+    playing = await db.playing(chat_id)
+    await query.edit_message_text(
+        queue_page_text(query.lang, items, page),
+        reply_markup=buttons.queue_markup(
+            chat_id,
+            query.lang["playing"] if playing else query.lang["paused"],
+            playing,
+            page,
+            total_pages,
+        ),
+    )
+    await query.answer()
 
 
 @app.on_callback_query(filters.regex(r"^close_message") & ~app.bl_users)

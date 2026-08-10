@@ -10,17 +10,15 @@ from pyrogram import filters, types
 from zefron import zefx, app, config, db, lang, queue, tg, yt
 from zefron.helpers import buttons, utils
 from zefron.helpers._play import checkUB
+from zefron.helpers._playlist import remember as remember_playlist
+from zefron.helpers._queue_view import page_count, playlist_page_text
 from zefron.helpers.recommend import fetch_and_cache
 from zefron.helpers.spotify import is_spotify, is_spotify_playlist, spotify_track, spotify_playlist
 
 
 def playlist_to_queue(chat_id: int, tracks: list) -> str:
-    text = "<blockquote expandable>"
     for track in tracks:
-        pos = queue.add(chat_id, track)
-        text += f"<b>{pos}.</b> {track.title}\n"
-    text = text[:1948] + "</blockquote>"
-    return text
+        queue.add(chat_id, track)
 
 @app.on_message(
     filters.command(["play", "vplay", "playforce", "vplayforce", "fvplay"])
@@ -59,8 +57,17 @@ async def play_hndlr(
         if is_spotify(url):
             if is_spotify_playlist(url):
                 await sent.edit_text(m.lang["playlist_fetch"])
+                available = max(
+                    0,
+                    config.SPOTIFY_QUEUE_LIMIT
+                    - len(queue.get_queue(m.chat.id)),
+                )
+                if not available:
+                    return await sent.edit_text(
+                        m.lang["play_queue_full"].format(config.SPOTIFY_QUEUE_LIMIT)
+                    )
                 tracks = await spotify_playlist(
-                    url, None, mention, video, yt
+                    url, available, mention, video, yt
                 )
                 if not tracks:
                     return await sent.edit_text(m.lang["playlist_error"])
@@ -145,10 +152,24 @@ async def play_hndlr(
                 ),
             )
             if tracks:
-                added = playlist_to_queue(m.chat.id, tracks)
-                await app.send_message(
+                playlist_to_queue(m.chat.id, tracks)
+                playlist_message = await app.send_message(
                     chat_id=m.chat.id,
-                    text=m.lang["playlist_queued"].format(len(tracks)) + added,
+                    text=playlist_page_text(
+                        m.lang,
+                        len(tracks),
+                        [(track.title, track.duration) for track in tracks],
+                        0,
+                    ),
+                )
+                remember_playlist(m.chat.id, playlist_message.id, tracks)
+                await playlist_message.edit_reply_markup(
+                    buttons.playlist_pages(
+                        m.chat.id,
+                        playlist_message.id,
+                        0,
+                        page_count(len(tracks)),
+                    )
                 )
             return
 
@@ -164,8 +185,22 @@ async def play_hndlr(
     await zefx.play_media(chat_id=m.chat.id, message=sent, media=file)
     if not tracks:
         return
-    added = playlist_to_queue(m.chat.id, tracks)
-    await app.send_message(
+    playlist_to_queue(m.chat.id, tracks)
+    playlist_message = await app.send_message(
         chat_id=m.chat.id,
-        text=m.lang["playlist_queued"].format(len(tracks)) + added,
+        text=playlist_page_text(
+            m.lang,
+            len(tracks),
+            [(track.title, track.duration) for track in tracks],
+            0,
+        ),
+    )
+    remember_playlist(m.chat.id, playlist_message.id, tracks)
+    await playlist_message.edit_reply_markup(
+        buttons.playlist_pages(
+            m.chat.id,
+            playlist_message.id,
+            0,
+            page_count(len(tracks)),
+        )
     )

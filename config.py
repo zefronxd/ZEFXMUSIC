@@ -17,6 +17,7 @@ class Config:
         self.DURATION_LIMIT = int(getenv("DURATION_LIMIT") or getenv("SONG_DURATION_LIMIT", 60)) * 60
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", 20))
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", 20))
+        self.SPOTIFY_QUEUE_LIMIT = 100
 
         self.SESSION1 = getenv("SESSION") or getenv("STRING1") or None
         self.SESSION2 = getenv("SESSION2", None)

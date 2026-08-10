@@ -7,6 +7,7 @@ from pyrogram import filters, types
 
 from zefron import app, db, lang, queue
 from zefron.helpers import buttons
+from zefron.helpers._queue_view import page_count, queue_page_text
 
 
 @app.on_message(filters.command(["queue", "playing"]) & filters.group & ~app.bl_users)
@@ -18,28 +19,14 @@ async def _queue_func(_, m: types.Message):
     _reply = await m.reply_text(m.lang["queue_fetching"])
     _queue = queue.get_queue(m.chat.id)
     _media = _queue[0]
-    _text = m.lang["queue_curr"].format(
-        _media.url,
-        _media.title[:50],
-        _media.duration,
-        _media.user,
-    )
-    _queue.pop(0)
-
-    if _queue:
-        _text += "<blockquote expandable>"
-        for i, media in enumerate(_queue, start=1):
-            if i == 15:
-                break
-            _text += m.lang["queue_item"].format(
-                i + 1, media.title, media.duration
-            )
-        _text += "</blockquote>"
+    _text = queue_page_text(m.lang, _queue, 0)
 
     _playing = await db.playing(m.chat.id)
     _buttons = buttons.queue_markup(
         m.chat.id,
         m.lang["playing"] if _playing else m.lang["paused"],
         _playing,
+        0,
+        page_count(max(1, len(_queue) - 1)),
     )
     await _reply.edit_text(text=_text, reply_markup=_buttons)

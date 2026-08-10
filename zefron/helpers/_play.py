@@ -119,11 +119,15 @@ def checkUB(play):
 
         url = utils.get_url(m)
         spotify_playlist_request = bool(url and is_spotify_playlist(url))
-        if (
-            len(queue.get_queue(chat_id)) >= config.QUEUE_LIMIT
-            and not spotify_playlist_request
-        ):
+        if len(queue.get_queue(chat_id)) >= config.QUEUE_LIMIT and not spotify_playlist_request:
             return await m.reply_text(m.lang["play_queue_full"].format(config.QUEUE_LIMIT))
+        if (
+            spotify_playlist_request
+            and len(queue.get_queue(chat_id)) >= config.SPOTIFY_QUEUE_LIMIT
+        ):
+            return await m.reply_text(
+                m.lang["play_queue_full"].format(config.SPOTIFY_QUEUE_LIMIT)
+            )
 
         cmd = m.command[0].lower()
         force = cmd.endswith("force") or cmd.startswith("fv") or (
