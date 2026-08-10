@@ -3,6 +3,8 @@
 # This file is part of ZEFXMusic
 
 import asyncio
+import html
+import json
 import re
 import time
 
@@ -132,6 +134,84 @@ async def _spotify_get(
         return None
 
 
+async def _fetch_public_meta(kind: str, spotify_id: str, spotify_url: str) -> list[dict]:
+    """Read track metadata from Spotify's public embed page.
+
+    Spotify occasionally returns 403 for the Web API track endpoint even when
+    the track is public and playable. The embed page is a public, read-only
+    metadata surface and does not require an app token, so use it as a fallback
+    for individual tracks and episodes.
+    """
+    try:
+        embed_url = f"https://open.spotify.com/embed/{kind}/{spotify_id}"
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
+            async with session.get(
+                embed_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+            ) as response:
+                if response.status != 200:
+                    logger.warning(
+                        "Spotify public embed %s failed: HTTP %s",
+                        spotify_id,
+                        response.status,
+                    )
+                    return []
+                page = await response.text()
+
+        match = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            page,
+            re.DOTALL,
+        )
+        if not match:
+            return []
+
+        payload = json.loads(html.unescape(match.group(1)))
+        entity = (
+            payload.get("props", {})
+            .get("pageProps", {})
+            .get("state", {})
+            .get("data", {})
+            .get("entity", {})
+        )
+        if not isinstance(entity, dict) or entity.get("type") != kind:
+            return []
+
+        title = (entity.get("name") or entity.get("title") or "").strip()
+        if not title:
+            return []
+
+        artists = entity.get("artists") or []
+        artist = ", ".join(
+            artist.get("name", "").strip()
+            for artist in artists
+            if isinstance(artist, dict) and artist.get("name")
+        )
+        visual_identity = entity.get("visualIdentity") or {}
+        images = visual_identity.get("image") or []
+        thumbnail = next(
+            (
+                image.get("url", "")
+                for image in images
+                if isinstance(image, dict) and image.get("url")
+            ),
+            "",
+        )
+        duration_ms = int(entity.get("duration") or 0)
+        return [
+            {
+                "title": title,
+                "channel": artist,
+                "url": spotify_url,
+                "thumbnail": thumbnail,
+                "duration": duration_ms // 1000,
+            }
+        ]
+    except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError, ValueError) as ex:
+        logger.warning("Spotify public metadata failed for %s: %s", spotify_id, ex)
+        return []
+
+
 def _track_item(item: dict, album: dict | None = None) -> dict | None:
     """Convert a Spotify track object to the metadata used by playback."""
     if not item or item.get("is_local"):
@@ -233,7 +313,7 @@ async def _fetch_meta(spotify_url: str) -> list[dict]:
 
     data = await _spotify_get(f"/{kind}s/{spotify_id}")
     if not data:
-        return []
+        return await _fetch_public_meta(kind, spotify_id, spotify_url)
     item = _episode_item(data) if kind == "episode" else _track_item(data)
     return [item] if item else []
 
