@@ -4,6 +4,7 @@
 
 
 from collections import defaultdict, deque
+import random
 from typing import Union
 
 from ._dataclass import Media, Track
@@ -69,3 +70,17 @@ class Queue:
     def clear(self, chat_id: int) -> None:
         """Clear the entire queue."""
         self.queues[chat_id].clear()
+
+    def shuffle_queued(self, chat_id: int) -> int:
+        """Randomize queued tracks while keeping the current track first."""
+        items = self.queues[chat_id]
+        if len(items) < 3:
+            return 0
+
+        current = items[0]
+        queued = list(items)[1:]
+        random.shuffle(queued)
+        items.clear()
+        items.append(current)
+        items.extend(queued)
+        return len(queued)
