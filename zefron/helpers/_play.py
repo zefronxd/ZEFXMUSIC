@@ -9,7 +9,7 @@ from pyrogram import enums, errors, types
 
 from zefron import app, config, db, logger, queue, yt
 from zefron.helpers import utils
-from zefron.helpers.spotify import is_spotify
+from zefron.helpers.spotify import is_spotify, is_spotify_playlist
 
 
 async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
@@ -117,7 +117,12 @@ def checkUB(play):
         ):
             return await m.reply_text(m.lang["play_usage"])
 
-        if len(queue.get_queue(chat_id)) >= config.QUEUE_LIMIT:
+        url = utils.get_url(m)
+        spotify_playlist_request = bool(url and is_spotify_playlist(url))
+        if (
+            len(queue.get_queue(chat_id)) >= config.QUEUE_LIMIT
+            and not spotify_playlist_request
+        ):
             return await m.reply_text(m.lang["play_queue_full"].format(config.QUEUE_LIMIT))
 
         cmd = m.command[0].lower()
@@ -125,7 +130,6 @@ def checkUB(play):
             len(m.command) > 1 and "-f" in m.command[1]
         )
         video = "v" in cmd and config.VIDEO_PLAY
-        url = utils.get_url(m)
         if url and yt.invalid(url) and not is_spotify(url):
             return await m.reply_text(m.lang["play_not_found"].format(config.SUPPORT_CHAT))
         m3u8 = url and not yt.valid(url) and not is_spotify(url)

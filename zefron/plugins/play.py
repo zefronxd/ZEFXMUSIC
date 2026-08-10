@@ -60,7 +60,7 @@ async def play_hndlr(
             if is_spotify_playlist(url):
                 await sent.edit_text(m.lang["playlist_fetch"])
                 tracks = await spotify_playlist(
-                    url, config.PLAYLIST_LIMIT, mention, video, yt
+                    url, None, mention, video, yt
                 )
                 if not tracks:
                     return await sent.edit_text(m.lang["playlist_error"])

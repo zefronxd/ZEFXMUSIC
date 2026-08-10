@@ -52,7 +52,8 @@ def _sp_cache_key(url: str) -> str | None:
     kind = match.group(1) or match.group(3)
     spotify_id = match.group(2) or match.group(4)
     if kind in ("playlist", "album") and spotify_id:
-        return f"spotify-api-v1:{kind}:{spotify_id}"
+        # v2 invalidates caches created before collection pagination.
+        return f"spotify-api-v2:{kind}:{spotify_id}"
     return None
 
 
@@ -264,7 +265,7 @@ def _episode_item(item: dict) -> dict | None:
 
 
 async def _fetch_collection_meta(spotify_url: str) -> list[dict]:
-    """Fetch public playlist or album tracks from the Spotify Web API."""
+    """Fetch every public playlist or album track from the Spotify Web API."""
     match = SPOTIFY_REGEX.search(spotify_url)
     if not match:
         return []
@@ -272,32 +273,39 @@ async def _fetch_collection_meta(spotify_url: str) -> list[dict]:
     kind = match.group(1) or match.group(3)
     spotify_id = match.group(2) or match.group(4)
     if kind == "playlist":
-        data = await _spotify_get(
-            f"/playlists/{spotify_id}/tracks",
-            {
-                "limit": 100,
-                "fields": (
-                    "items(track(id,name,is_local,duration_ms,artists(name),"
-                    "album(images),external_urls.spotify))"
-                ),
-            },
-        )
-        entries = data.get("items", []) if data else []
-        return [
-            metadata
-            for entry in entries
-            if (metadata := _track_item(entry.get("track")))
-        ]
+        path = f"/playlists/{spotify_id}/tracks"
+        params = {
+            "limit": 100,
+            "offset": 0,
+            "fields": (
+                "items(track(id,name,is_local,duration_ms,artists(name),"
+                "album(images),external_urls.spotify)),next"
+            ),
+        }
+        album = None
+    else:
+        data = await _spotify_get(f"/albums/{spotify_id}")
+        if not data:
+            return []
+        path = f"/albums/{spotify_id}/tracks"
+        params = {"limit": 50, "offset": 0}
+        album = {"images": data.get("images") or []}
 
-    data = await _spotify_get(f"/albums/{spotify_id}")
-    if not data:
-        return []
-    album = {"images": data.get("images") or []}
-    return [
-        metadata
-        for item in (data.get("tracks") or {}).get("items", [])
-        if (metadata := _track_item(item, album))
-    ]
+    metadata_items: list[dict] = []
+    while True:
+        data = await _spotify_get(path, params)
+        if not data:
+            break
+        entries = data.get("items", [])
+        for entry in entries:
+            item = entry.get("track") if kind == "playlist" else entry
+            if metadata := _track_item(item, album):
+                metadata_items.append(metadata)
+        if not data.get("next") or not entries:
+            break
+        params["offset"] += params["limit"]
+
+    return metadata_items
 
 
 async def _fetch_meta(spotify_url: str) -> list[dict]:
@@ -379,7 +387,7 @@ async def spotify_track(
 
 async def spotify_playlist(
     url: str,
-    limit: int,
+    limit: int | None,
     user: str,
     video: bool,
     yt_instance,
@@ -416,7 +424,7 @@ async def spotify_playlist(
                 len(raw_results),
             )
 
-    results = raw_results[:limit]
+    results = raw_results if limit is None else raw_results[:limit]
     tracks: list[Track] = []
 
     async def _resolve(item: dict) -> Track | None:
