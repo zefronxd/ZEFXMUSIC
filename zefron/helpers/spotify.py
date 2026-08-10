@@ -178,6 +178,37 @@ async def _fetch_public_meta(kind: str, spotify_id: str, spotify_url: str) -> li
         if not isinstance(entity, dict) or entity.get("type") != kind:
             return []
 
+        if kind in ("playlist", "album"):
+            cover_art = entity.get("coverArt") or {}
+            sources = cover_art.get("sources") or []
+            thumbnail = next(
+                (
+                    source.get("url", "")
+                    for source in sources
+                    if isinstance(source, dict) and source.get("url")
+                ),
+                "",
+            )
+            results = []
+            for track in entity.get("trackList") or []:
+                if not isinstance(track, dict) or track.get("entityType") != "track":
+                    continue
+                track_uri = track.get("uri") or ""
+                track_id = track_uri.rsplit(":", 1)[-1]
+                title = (track.get("title") or "").strip()
+                if not track_id or not title:
+                    continue
+                results.append(
+                    {
+                        "title": title,
+                        "channel": (track.get("subtitle") or "").replace("\xa0", " ").strip(),
+                        "url": f"https://open.spotify.com/track/{track_id}",
+                        "thumbnail": thumbnail,
+                        "duration": int(track.get("duration") or 0) // 1000,
+                    }
+                )
+            return results
+
         title = (entity.get("name") or entity.get("title") or "").strip()
         if not title:
             return []
@@ -295,7 +326,7 @@ async def _fetch_collection_meta(spotify_url: str) -> list[dict]:
     while True:
         data = await _spotify_get(path, params)
         if not data:
-            break
+            return await _fetch_public_meta(kind, spotify_id, spotify_url)
         entries = data.get("items", [])
         for entry in entries:
             item = entry.get("track") if kind == "playlist" else entry
