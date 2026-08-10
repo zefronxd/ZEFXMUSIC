@@ -139,31 +139,24 @@ class Inline:
             ],
         ]
         if total_pages > 1:
-            rows.append([
-                self.ikb(
-                    text="◀ Previous",
-                    callback_data=f"queue_page {chat_id} {page - 1}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ) if page > 0 else self.ikb(
-                    text="·",
-                    callback_data=f"queue_page {chat_id} {page}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ),
-                self.ikb(
-                    text=f"{page + 1}/{total_pages}",
-                    callback_data=f"queue_page {chat_id} {page}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ),
-                self.ikb(
-                    text="Next ▶",
-                    callback_data=f"queue_page {chat_id} {page + 1}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ) if page < total_pages - 1 else self.ikb(
-                    text="·",
-                    callback_data=f"queue_page {chat_id} {page}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ),
-            ])
+            navigation = []
+            if page > 0:
+                navigation.append(
+                    self.ikb(
+                        text="◀ Previous",
+                        callback_data=f"queue_page {chat_id} {page - 1}",
+                        style=enums.ButtonStyle.PRIMARY,
+                    )
+                )
+            if page < total_pages - 1:
+                navigation.append(
+                    self.ikb(
+                        text="Next ▶",
+                        callback_data=f"queue_page {chat_id} {page + 1}",
+                        style=enums.ButtonStyle.PRIMARY,
+                    )
+                )
+            rows.append(navigation)
         return self.ikm(rows)
 
     def playlist_pages(
@@ -171,31 +164,24 @@ class Inline:
     ) -> types.InlineKeyboardMarkup:
         rows = []
         if total_pages > 1:
-            rows.append([
-                self.ikb(
-                    text="◀ Previous",
-                    callback_data=f"playlist_page {chat_id} {message_id} {page - 1}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ) if page > 0 else self.ikb(
-                    text="·",
-                    callback_data=f"playlist_page {chat_id} {message_id} {page}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ),
-                self.ikb(
-                    text=f"{page + 1}/{total_pages}",
-                    callback_data=f"playlist_page {chat_id} {message_id} {page}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ),
-                self.ikb(
-                    text="Next ▶",
-                    callback_data=f"playlist_page {chat_id} {message_id} {page + 1}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ) if page < total_pages - 1 else self.ikb(
-                    text="·",
-                    callback_data=f"playlist_page {chat_id} {message_id} {page}",
-                    style=enums.ButtonStyle.PRIMARY,
-                ),
-            ])
+            navigation = []
+            if page > 0:
+                navigation.append(
+                    self.ikb(
+                        text="◀ Previous",
+                        callback_data=f"playlist_page {chat_id} {message_id} {page - 1}",
+                        style=enums.ButtonStyle.PRIMARY,
+                    )
+                )
+            if page < total_pages - 1:
+                navigation.append(
+                    self.ikb(
+                        text="Next ▶",
+                        callback_data=f"playlist_page {chat_id} {message_id} {page + 1}",
+                        style=enums.ButtonStyle.PRIMARY,
+                    )
+                )
+            rows.append(navigation)
         return self.ikm(rows)
 
     def settings_markup(

@@ -17,6 +17,14 @@ from zefron.helpers._queue_view import page_count, playlist_page_text, queue_pag
 from zefron.helpers.recommend import fetch_and_cache
 
 
+async def _safe_callback_answer(query: types.CallbackQuery, *args, **kwargs):
+    """Ignore callback IDs that Telegram has already expired."""
+    try:
+        return await query.answer(*args, **kwargs)
+    except errors.QueryIdInvalid:
+        return None
+
+
 @app.on_callback_query(filters.regex("cancel_dl") & ~app.bl_users)
 @lang.language()
 async def cancel_dl(_, query: types.CallbackQuery):
@@ -32,17 +40,19 @@ async def _playlist_page(_, query: types.CallbackQuery):
     chat_id, message_id, page = map(int, parts[1:4])
     items = get_playlist(chat_id, message_id)
     if items is None:
-        return await query.answer("Playlist list expired. Use /play again.", show_alert=True)
+        return await _safe_callback_answer(
+            query, "Playlist list expired. Use /play again.", show_alert=True
+        )
 
     total_pages = page_count(len(items))
     page = max(0, min(page, total_pages - 1))
+    await _safe_callback_answer(query)
     await query.edit_message_text(
         playlist_page_text(query.lang, len(items), items, page),
         reply_markup=buttons.playlist_pages(
             chat_id, message_id, page, total_pages
         ),
     )
-    await query.answer()
 
 
 @app.on_callback_query(filters.regex(r"^queue_page ") & ~app.bl_users)
@@ -53,11 +63,12 @@ async def _queue_page(_, query: types.CallbackQuery):
     chat_id, page = int(parts[1]), int(parts[2])
     items = queue.get_queue(chat_id)
     if not items:
-        return await query.answer("Queue is empty.", show_alert=True)
+        return await _safe_callback_answer(query, "Queue is empty.", show_alert=True)
 
     total_pages = page_count(max(1, len(items) - 1))
     page = max(0, min(page, total_pages - 1))
     playing = await db.playing(chat_id)
+    await _safe_callback_answer(query)
     await query.edit_message_text(
         queue_page_text(query.lang, items, page),
         reply_markup=buttons.queue_markup(
@@ -68,7 +79,6 @@ async def _queue_page(_, query: types.CallbackQuery):
             total_pages,
         ),
     )
-    await query.answer()
 
 
 @app.on_callback_query(filters.regex(r"^close_message") & ~app.bl_users)
