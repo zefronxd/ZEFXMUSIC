@@ -95,12 +95,6 @@ SESSION=BQgfh...AA
 
 ---
 
-### Smart DJ
-
-Use `/autodj on` to automatically play up to five similar tracks when the
-current queue ends. Use `/autodj off` to disable it or `/autodj status` to
-check the current session.
-
 ## 🚀 Deployment
 
 ### Local / VPS

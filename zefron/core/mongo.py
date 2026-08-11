@@ -115,15 +115,6 @@ class MongoDB:
         self.autoplay[chat_id] = {"on": new_on, "count": 0, "played_ids": set(), "seed": None}
         return new_on
 
-    async def set_autoplay(self, chat_id: int, enabled: bool) -> None:
-        """Set Smart DJ state explicitly and reset its session."""
-        self.autoplay[chat_id] = {
-            "on": bool(enabled),
-            "count": 0,
-            "played_ids": set(),
-            "seed": None,
-        }
-
     async def autoplay_tick(self, chat_id: int) -> int:
         """Increment autoplay song counter and return the new count."""
         state = self._ap_state(chat_id)

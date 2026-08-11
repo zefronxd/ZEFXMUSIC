@@ -51,7 +51,6 @@ def _schedule_prefetch(chat_id: int, media) -> None:
 
 _GROUP_ONLY_CMDS = [
     "play", "playforce", "vplay", "vplayforce",
-    "autodj", "smartdj",
     "pause", "resume", "skip", "next", "stop", "end",
     "seek", "seekback", "loop", "queue", "playing",
     "auth", "unauth", "authlist", "admincache", "reload",
