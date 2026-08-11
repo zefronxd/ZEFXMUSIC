@@ -55,6 +55,7 @@ _GROUP_ONLY_CMDS = [
     "seek", "seekback", "loop", "queue", "playing",
     "auth", "unauth", "authlist", "admincache", "reload",
     "blacklist", "unblacklist", "playmode", "settings", "stats",
+    "sametaste", "taste", "musicmatch",
 ]
 
 @app.on_message(filters.command(_GROUP_ONLY_CMDS) & filters.private)

@@ -153,6 +153,7 @@ docker run --env-file .env zefxmusic
 | `/radio punjabi` | Play Punjabi new-hits radio from a direct live stream |
 | `/radio status` | Show the active radio source and reconnect status |
 | `/ping` | Check bot latency |
+| `/sametaste` | Compare favourite songs with another member |
 
 ---
 
