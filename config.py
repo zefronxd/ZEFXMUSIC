@@ -26,7 +26,17 @@ class Config:
         self.SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/zefron_musicworld")
         self.SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+urALmsBSdB9hYWE5")
 
-        self.AUTO_LEAVE: bool = getenv("AUTO_LEAVE", "False").lower() == "true"
+        # Assistant cleanup compatibility with the imported auto-leave
+        # feature. Keep AUTO_LEAVE working for existing deployments.
+        self.AUTO_LEAVING_ASSISTANT: bool = getenv(
+            "AUTO_LEAVING_ASSISTANT",
+            getenv("AUTO_LEAVE", "False"),
+        ).lower() == "true"
+        self.AUTO_LEAVE = self.AUTO_LEAVING_ASSISTANT
+        self.AUTO_LEAVE_ASSISTANT_TIME = max(
+            int(getenv("AUTO_LEAVE_ASSISTANT_TIME", 3600)),
+            300,
+        )
         self.AUTO_END: bool = getenv("AUTO_END", "False").lower() == "true"
     
         self.THUMB_GEN: bool = getenv("THUMB_GEN", "True").lower() == "true"

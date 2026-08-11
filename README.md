@@ -77,6 +77,8 @@ SESSION=BQgfh...AA
 | `QUEUE_LIMIT` | ❌ | `20` | Max tracks in queue |
 | `PLAYLIST_LIMIT` | ❌ | `20` | Max tracks from a playlist |
 | `AUTO_LEAVE` | ❌ | `False` | Auto-leave voice chat when empty |
+| `AUTO_LEAVING_ASSISTANT` | ❌ | `False` | Enable periodic cleanup of inactive assistant chats |
+| `AUTO_LEAVE_ASSISTANT_TIME` | ❌ | `3600` | Seconds between assistant cleanup cycles (minimum 300) |
 | `AUTO_END` | ❌ | `False` | Auto-end stream when queue is empty |
 | `THUMB_GEN` | ❌ | `True` | Generate thumbnails |
 | `VIDEO_PLAY` | ❌ | `True` | Enable video playback |

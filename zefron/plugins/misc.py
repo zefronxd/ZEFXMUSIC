@@ -8,7 +8,7 @@ import asyncio
 
 from pyrogram import enums, errors, filters, types
 
-from zefron import zefx, app, config, db, lang, queue, tasks, userbot, yt
+from zefron import zefx, app, config, db, lang, logger, queue, tasks, userbot, yt
 from zefron.helpers import buttons
 
 
@@ -72,24 +72,43 @@ async def _watcher_vc(_, m: types.Message):
 
 async def auto_leave():
     while True:
-        await asyncio.sleep(3600)
-        for ub in userbot.clients:
+        await asyncio.sleep(config.AUTO_LEAVE_ASSISTANT_TIME)
+        for ub in list(userbot.clients):
             try:
-                chats = [dialog.chat.id async for dialog in ub.get_dialogs()
-                            if dialog.chat.type in [
-                                enums.ChatType.GROUP, enums.ChatType.SUPERGROUP,
-                            ]][-20:]
-                for chat in chats:
-                    if chat in [app.logger, -1001686672798, -1001549206010]:
+                left = 0
+                async for dialog in ub.get_dialogs():
+                    chat = dialog.chat
+                    if chat.type not in [
+                        enums.ChatType.GROUP,
+                        enums.ChatType.SUPERGROUP,
+                        enums.ChatType.CHANNEL,
+                    ]:
                         continue
-                    if chat in db.active_calls:
+                    if chat.id in {
+                        config.LOGGER_ID,
+                        -1001686672798,
+                        -1001549206010,
+                    }:
                         continue
-                    await ub.leave_chat(chat)
+                    if chat.id in db.active_calls:
+                        continue
+                    if left >= 20:
+                        break
+                    try:
+                        await ub.leave_chat(chat.id)
+                        left += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        continue
                     await asyncio.sleep(12)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                continue
+            except Exception as ex:
+                logger.warning(
+                    "Assistant inactive-chat cleanup failed: %s",
+                    type(ex).__name__,
+                )
 
 
 async def track_time():
@@ -200,7 +219,7 @@ async def vc_watcher(sleep=15):
 
 if config.AUTO_END:
     tasks.append(asyncio.create_task(vc_watcher()))
-if config.AUTO_LEAVE:
+if config.AUTO_LEAVING_ASSISTANT:
     tasks.append(asyncio.create_task(auto_leave()))
 tasks.append(asyncio.create_task(track_time()))
 tasks.append(asyncio.create_task(update_timer()))
