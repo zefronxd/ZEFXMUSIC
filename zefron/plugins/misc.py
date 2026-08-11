@@ -160,11 +160,15 @@ async def update_timer(length=10, sleep=12):
                 return
 
             async with _ui_slots:
+                autoplay_on = (await db.get_autoplay(chat_id))["on"]
                 await app.edit_message_reply_markup(
                     chat_id=chat_id,
                     message_id=message_id,
                     reply_markup=buttons.controls(
-                        chat_id=chat_id, timer=timer, remove=remove
+                        chat_id=chat_id,
+                        timer=timer,
+                        remove=remove,
+                        autoplay_on=autoplay_on,
                     ),
                 )
         except asyncio.CancelledError:

@@ -200,8 +200,11 @@ async def _controls(_, query: types.CallbackQuery):
                 query.message.caption.html or query.message.text.html,
                 flags=re.DOTALL,
             )
+            autoplay_on = (await db.get_autoplay(chat_id))["on"]
             keyboard = buttons.controls(
-                chat_id, status=status if action != "resume" else None
+                chat_id,
+                status=status if action != "resume" else None,
+                autoplay_on=autoplay_on,
             )
         await query.edit_message_text(
             f"{mtext}\n\n<blockquote>{reply}</blockquote>", reply_markup=keyboard

@@ -22,5 +22,8 @@ async def _resume(_, m: types.Message):
     await zefx.resume(m.chat.id)
     await m.reply_text(
         text=m.lang["play_resumed"].format(m.from_user.mention),
-        reply_markup=buttons.controls(m.chat.id),
+        reply_markup=buttons.controls(
+            m.chat.id,
+            autoplay_on=(await db.get_autoplay(m.chat.id))["on"],
+        ),
     )
