@@ -494,6 +494,21 @@ class MongoDB:
         except Exception:
             return []
 
+    async def get_all_favourite_lists(self, exclude_id: int | None = None) -> list[list[dict]]:
+        """Return saved favourite lists without exposing user identity."""
+        try:
+            query = {"_id": {"$ne": exclude_id}} if exclude_id is not None else {}
+            return [
+                doc.get("songs", [])
+                async for doc in self._favdb.find(
+                    query,
+                    projection={"songs": 1},
+                )
+                if doc.get("songs")
+            ]
+        except Exception:
+            return []
+
     async def is_favourite(self, user_id: int, video_id: str) -> bool:
         """Check if a song is already in user's favourites."""
         songs = await self.get_favourites(user_id)
