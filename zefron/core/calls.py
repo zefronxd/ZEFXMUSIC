@@ -30,6 +30,7 @@ class TgCall(PyTgCalls):
         self._play_generation: dict[int, int] = {}
         self._play_locks: dict[int, asyncio.Lock] = {}
         self._card_tasks: dict[int, asyncio.Task] = {}
+        self._stream_recovery: set[int] = set()
 
     def _schedule_next(self, chat_id: int) -> None:
         """Schedule one reliable queue transition after the current one ends."""
@@ -329,13 +330,27 @@ class TgCall(PyTgCalls):
             async with self._play_lock(chat_id):
                 if generation != self._generation(chat_id):
                     return
-                await client.play(
-                    chat_id=chat_id,
-                    stream=stream,
-                    # Let PyTgCalls start the group call immediately when
-                    # needed instead of requiring a second start round trip.
-                    config=types.GroupCallConfig(auto_start=True),
-                )
+                for attempt in range(3):
+                    try:
+                        await client.play(
+                            chat_id=chat_id,
+                            stream=stream,
+                            # Let PyTgCalls start the group call immediately when
+                            # needed instead of requiring a second start round trip.
+                            config=types.GroupCallConfig(auto_start=True),
+                        )
+                        break
+                    except (ConnectionError, ConnectionNotFound, TelegramServerError):
+                        if attempt == 2:
+                            raise
+                        delay = 0.75 * (attempt + 1)
+                        logger.warning(
+                            "VC connection retry %s/2 in %.2fs for chat %s",
+                            attempt + 1,
+                            delay,
+                            chat_id,
+                        )
+                        await asyncio.sleep(delay)
             # A stop/force transition may have happened while Telegram was
             # connecting.  Do not mark an old stream as active afterwards.
             if generation != self._generation(chat_id):
@@ -415,6 +430,7 @@ class TgCall(PyTgCalls):
         except (ConnectionError, ConnectionNotFound, TelegramServerError):
             if generation != self._generation(chat_id):
                 return
+            logger.warning("VC connection could not recover in chat %s", chat_id)
             await self.stop(chat_id)
             await message.edit_text(_lang["error_tg_server"])
         except RTMPStreamingUnsupported:
@@ -637,15 +653,35 @@ class TgCall(PyTgCalls):
         async def update_handler(_, update: types.Update) -> None:
             if isinstance(update, types.StreamEnded):
                 if update.stream_type == types.StreamEnded.Type.AUDIO:
-                    # Radio streams (duration == "∞") should auto-reconnect
-                    current = queue.get_current(update.chat_id)
-                    if current and getattr(current, "duration", "") == "∞":
-                        try:
-                            await self.replay(update.chat_id)
-                        except Exception:
-                            await self.play_next(update.chat_id)
-                    else:
-                        await self.play_next(update.chat_id)
+                    chat_id = update.chat_id
+                    if chat_id in self._stream_recovery:
+                        return
+                    self._stream_recovery.add(chat_id)
+                    try:
+                        current = queue.get_current(chat_id)
+                        if not current:
+                            return
+
+                        # A stream ending well before its expected duration is
+                        # usually a transient source/VC drop, not a completed
+                        # song. Reconnect the same track instead of skipping it.
+                        duration = getattr(current, "duration_sec", 0) or 0
+                        elapsed = getattr(current, "time", 0) or 0
+                        unexpected_end = bool(
+                            duration and elapsed < max(duration - 5, 5)
+                        )
+
+                        if unexpected_end or getattr(current, "duration", "") == "∞":
+                            try:
+                                await asyncio.sleep(0.5)
+                                await self.replay(chat_id)
+                            except Exception:
+                                await self.play_next(chat_id)
+                            return
+
+                        await self.play_next(chat_id)
+                    finally:
+                        self._stream_recovery.discard(chat_id)
             elif isinstance(update, types.ChatUpdate):
                 if update.status in [
                     types.ChatUpdate.Status.KICKED,
