@@ -173,6 +173,11 @@ async def play_hndlr(
                 )
             return
 
+    # Join the voice chat before the first track is downloaded. The actual
+    # stream is attached by play_media once the media source is ready.
+    if not was_active and queue.get_current(m.chat.id) is file:
+        await zefx.prepare_call(m.chat.id)
+
     if not file.file_path:
         # Audio is normalized to a local WAV before playback so CDN jitter
         # cannot drain the VC input buffer. Video remains a local ShrutiAPI

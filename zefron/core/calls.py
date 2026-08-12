@@ -75,6 +75,32 @@ class TgCall(PyTgCalls):
         if task is not asyncio.current_task() and task and not task.done():
             task.cancel()
 
+    async def prepare_call(self, chat_id: int) -> bool:
+        """Join the voice chat before media preparation finishes.
+
+        PyTgCalls accepts an empty stream and keeps the call connection alive.
+        The later ``play_media`` call then replaces that empty source instead
+        of waiting for the assistant to join after a download completes.
+        """
+        if await db.get_call(chat_id):
+            return True
+
+        client = await db.get_assistant(chat_id)
+        try:
+            async with self._play_lock(chat_id):
+                if await db.get_call(chat_id):
+                    return True
+                await client.play(
+                    chat_id=chat_id,
+                    stream=None,
+                    config=types.GroupCallConfig(auto_start=True),
+                )
+                await db.add_call(chat_id)
+            return True
+        except Exception:
+            logger.exception("Could not pre-join voice chat %s", chat_id)
+            return False
+
     async def _recover_shruti_video(
         self,
         chat_id: int,
