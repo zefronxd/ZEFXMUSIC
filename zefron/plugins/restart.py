@@ -7,10 +7,14 @@ import os
 import sys
 import shutil
 import asyncio
+import logging
 
 from pyrogram import filters, types
 
-from zefron import app, db, lang, stop
+from zefron import app, db, lang
+
+
+logger = logging.getLogger(__name__)
 
 
 @app.on_message(filters.command(["logs"]) & app.sudoers)
@@ -52,10 +56,23 @@ async def _restart(_, m: types.Message):
         shutil.rmtree(directory, ignore_errors=True)
 
     await sent.edit_text(m.lang["restarted"])
-    task = asyncio.create_task(stop())
-    await task
 
-    try: os.remove("log.txt")
-    except Exception: pass
+    async def replace_process():
+        # Do not call stop() from inside a Pyrogram update handler.  app.exit()
+        # shuts down the dispatcher and can cancel this handler before exec()
+        # is reached, leaving the bot stopped after the status message.
+        await asyncio.sleep(1)
+        try:
+            os.remove("log.txt")
+        except FileNotFoundError:
+            pass
+        except OSError as ex:
+            logger.warning("Could not clear log before restart: %s", ex)
 
-    os.execl(sys.executable, sys.executable, "-m", "zefron")
+        logger.info("Replacing process for requested bot restart.")
+        try:
+            os.execv(sys.executable, [sys.executable, "-m", "zefron"])
+        except Exception:
+            logger.exception("Bot restart failed.")
+
+    asyncio.create_task(replace_process())
