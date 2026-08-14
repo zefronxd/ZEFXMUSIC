@@ -1,6 +1,6 @@
 <div align="center">
 
-![ZEFXMusic](.github/zefx.jpg)
+![ZEFXMusic](https://github.com/zefronxd/ZEFXMUSIC/raw/refs/heads/main/.github/zefx.jpg)
 
 <br><br>
 
