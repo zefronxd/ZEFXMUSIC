@@ -19,7 +19,8 @@ Supports YouTube, Spotify, Resso, Apple Music, SoundCloud and M3U8 links.
 </a>
 <br>
 
-<img src="https://raw.githubusercontent.com/zefronxd/ZEFXMusic/master/.github/zefx.jpg" width="720" height="auto">
+<img src="https://raw.githubusercontent.com/zefronxd/ZEFXMUSIC/main/.github/zefx.jpg" width="720" alt="ZEFXMusic">
+
 
 
 ZEFXMusic lets you stream high-quality and low-latency audio and video playback into telegram group video chats.<br>
