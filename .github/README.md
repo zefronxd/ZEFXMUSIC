@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/zefx.jpg" width="720" height="auto" alt="ZEFXMusic" style="border-radius: 12px"/>
+![ZEFXMusic](.github/zefx.jpg)
 
 <br><br>
 
