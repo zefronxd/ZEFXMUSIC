@@ -19,7 +19,8 @@ Supports YouTube, Spotify, Resso, Apple Music, SoundCloud and M3U8 links.
 </a>
 <br>
 
-<img src="[https://github.com/zefronxd/ZEFXMusic/blob/master/.github/zefx.jpg](https://github.com/zefronxd/ZEFXMUSIC/blob/main/.github/zefx.jpg)" width="720" height="auto">
+<img src="https://raw.githubusercontent.com/zefronxd/ZEFXMUSIC/main/.github/zefx.jpg" width="720" height="auto">
+
 
 ZEFXMusic lets you stream high-quality and low-latency audio and video playback into telegram group video chats.<br>
 Built with Python, Pyrogram, and Py-TgCalls, it’s optimized for reliability and easy deployment on Heroku, VPS, or Docker.
