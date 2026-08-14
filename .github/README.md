@@ -1,58 +1,103 @@
 <div align="center">
 
-<h2>ZEFXMusic</h2>
+<img src=".github/zefx.jpg" width="720" height="auto" alt="ZEFXMusic" style="border-radius: 12px"/>
 
-<b>Telegram Group Calls Streaming Bot</b><br>
-Supports YouTube, Spotify, Resso, Apple Music, SoundCloud and M3U8 links.
+<br><br>
 
-<a href="https://github.com/zefronxd/ZEFXMusic/stargazers">
-    <img src="https://img.shields.io/github/stars/zefronxd/ZEFXMusic?color=blueviolet&logo=github&logoColor=black&style=for-the-badge" alt="Stars"/>
-</a>
-<a href="https://github.com/zefronxd/ZEFXMusic/network/members">
-    <img src="https://img.shields.io/github/forks/zefronxd/ZEFXMusic?color=blueviolet&logo=github&logoColor=black&style=for-the-badge" alt="Forks"/>
-</a>
-<a href="https://github.com/zefronxd/ZEFXMusic/blob/master/LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License"/>
-</a>
-<a href="https://www.python.org/">
-    <img src="https://img.shields.io/badge/Written%20in-Python-blue?style=for-the-badge&logo=python" alt="Python"/>
-</a>
+# 🎵 ZEFXMusic
+
+**Telegram Group Calls Streaming Bot**
+
+Stream high-quality audio & video directly into your Telegram group video chats.
+Supports YouTube, Spotify, Apple Music, SoundCloud, Resso, and M3U8 links.
+
 <br>
 
-<img src="https://raw.githubusercontent.com/zefronxd/ZEFXMUSIC/main/.github/zefx.jpg" width="720" alt="ZEFXMusic">
+[![Stars](https://img.shields.io/github/stars/zefronxd/ZEFXMusic?color=blueviolet&logo=github&logoColor=black&style=for-the-badge)](https://github.com/zefronxd/ZEFXMusic/stargazers)
+[![Forks](https://img.shields.io/github/forks/zefronxd/ZEFXMusic?color=blueviolet&logo=github&logoColor=black&style=for-the-badge)](https://github.com/zefronxd/ZEFXMusic/network/members)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
+[![Python](https://img.shields.io/badge/Written%20in-Python-blue?style=for-the-badge&logo=python)](https://python.org)
 
-
-
-ZEFXMusic lets you stream high-quality and low-latency audio and video playback into telegram group video chats.<br>
-Built with Python, Pyrogram, and Py-TgCalls, it’s optimized for reliability and easy deployment on Heroku, VPS, or Docker.
 </div>
 
-<hr>
+---
 
-<h2>🔥 Features</h2>
+## ✨ Features
 
-- 🎧 Stream low-latency audio in real time to <b>Telegram group video chats</b>
-- 🌐 Supports multiple platforms like <b>YouTube, Spotify, Apple Music, SoundCloud</b>
-- ⚡ Advanced queue management with auto-play
-- ⚙️ Easy deployment — works on Local, VPS, or Heroku
-- ❤️ Built with Python
-<hr>
+- 🎧 **Low-latency audio streaming** into Telegram group video chats
+- 📺 **Video playback** support in group video chats
+- 🌐 **Multi-platform** — YouTube, Spotify, Apple Music, SoundCloud, Resso, M3U8
+- 📋 **Queue management** with auto-play support
+- 🌍 **Multi-language** support
+- 🖼️ **Thumbnail generation** for now-playing cards
+- 🍪 **Cookie support** for age-restricted / premium content
+- 👥 **Multiple assistant accounts** (up to 3 sessions)
+- 🔒 **Admin-based auth** system with blacklist and sudo users
+- ⚙️ **Easy deployment** — VPS, Heroku, Docker, or Replit
 
-<h2>☁️ Manual Deployment</h2>
+---
 
-<h3>✔️ Prerequisites</h3>
+## ⚙️ Configuration
 
-- <a href="https://www.python.org">Python 3.10+</a> installed  
-- <a href="https://deno.com/">deno</a> & <a href="https://ffmpeg.org/">ffmpeg</a> installed on your system  
-- Required variables mentioned in <a href="https://github.com/zefronxd/AnonXMusic/blob/master/sample.env">sample.env</a>
+Copy `sample.env` to `.env` and fill in your values:
 
-<details>
-    <summary>
-        <h3>Local / VPS Setup</h3>
-    </summary>
+```env
+# From my.telegram.org/apps
+API_ID=123456
+API_HASH=abcdef1234567890
 
+# From @BotFather on Telegram
+BOT_TOKEN=123456:ABC-DEF
+LOGGER_ID=-1001234567890
 
-<h4>🐧 Linux/macOS</h4>
+# From cloud.mongodb.com
+MONGO_URL=mongodb+srv://...
+
+# Your Telegram user ID
+OWNER_ID=123456789
+
+# Pyrogram session string (get from @StringFatherBot)
+SESSION=BQgfh...AA
+```
+
+### All Available Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `API_ID` | ✅ | — | Telegram API ID |
+| `API_HASH` | ✅ | — | Telegram API Hash |
+| `BOT_TOKEN` | ✅ | — | Bot token from @BotFather |
+| `MONGO_URL` | ✅ | — | MongoDB connection URL |
+| `LOGGER_ID` | ✅ | — | Log channel/group ID |
+| `OWNER_ID` | ✅ | — | Your Telegram user ID |
+| `SESSION` | ✅ | — | Pyrogram session string |
+| `SESSION2` | ❌ | — | 2nd assistant session |
+| `SESSION3` | ❌ | — | 3rd assistant session |
+| `DURATION_LIMIT` | ❌ | `60` | Max track duration (minutes) |
+| `QUEUE_LIMIT` | ❌ | `20` | Max tracks in queue |
+| `PLAYLIST_LIMIT` | ❌ | `20` | Max tracks from a playlist |
+| `AUTO_LEAVE` | ❌ | `False` | Auto-leave voice chat when empty |
+| `AUTO_LEAVING_ASSISTANT` | ❌ | `False` | Enable periodic cleanup of inactive assistant chats |
+| `AUTO_LEAVE_ASSISTANT_TIME` | ❌ | `3600` | Seconds between assistant cleanup cycles (minimum 300) |
+| `AUTO_END` | ❌ | `False` | Auto-end stream when queue is empty |
+| `THUMB_GEN` | ❌ | `True` | Generate thumbnails |
+| `VIDEO_PLAY` | ❌ | `True` | Enable video playback |
+| `LANG_CODE` | ❌ | `en` | Default language |
+| `COOKIES_URL` | ❌ | — | Cookie URL (batbin.me) for restricted content |
+| `SUPPORT_CHANNEL` | ❌ | — | Your support channel link |
+| `SUPPORT_CHAT` | ❌ | — | Your support group link |
+| `START_IMG` | ❌ | — | Start message image URL |
+| `PING_IMG` | ❌ | — | Ping message image URL |
+| `DEFAULT_THUMB` | ❌ | — | Default thumbnail image URL |
+| `ONEGRAB_API_KEY` | ❌ | — | Legacy search API key for non-Spotify fallback |
+| `SPOTIFY_CLIENT_ID` | ❌* | — | Spotify Developer app client ID |
+| `SPOTIFY_CLIENT_SECRET` | ❌* | — | Spotify Developer app client secret |
+
+---
+
+## 🚀 Deployment
+
+### Local / VPS
 
 ```bash
 git clone https://github.com/zefronxd/ZEFXMusic && cd ZEFXMusic
@@ -64,126 +109,81 @@ export PATH="$HOME/.local/bin:$PATH"
 # Install dependencies
 uv sync --frozen
 
-# Rename and configure environment variables
-mv sample.env .env
+# Configure environment
+cp sample.env .env
 # Edit .env with your credentials
 
 # Start the bot
 bash start
 ```
 
-<h4>🪟 Windows (PowerShell)</h4>
+### Replit audio baseline
+
+The Replit workflow uses Python 3.11, PyTgCalls 2.3.3, and the NTgCalls
+native media engine. Audio is normalized by FFmpeg to signed 16-bit,
+48 kHz stereo PCM before it enters the Telegram voice chat. This is an
+internal playback baseline and is intentionally not user-configurable.
+
+### Heroku
+
+[![Deploy on Heroku](https://img.shields.io/badge/Deploy%20On%20Heroku-black?style=for-the-badge&logo=heroku)](https://dashboard.heroku.com/new?template=https://github.com/zefronxd/ZEFXMusic)
+
+### Docker
 
 ```bash
-git clone https://github.com/zefronxd/ZEFXMusic && cd ZEFXMusic
-
-# Install uv
-irm https://astral.sh/uv/install.ps1 | iex
-
-# Install dependencies
-uv sync --frozen
-
-# Rename and configure environment variables
-mv sample.env .env
-# Edit .env with your credentials
-
-# Start the bot
-uv run python3 -m zefron
-
-> ⭐ or use Git Bash or WSL to run `bash start`.
+docker build -t zefxmusic .
+docker run --env-file .env zefxmusic
 ```
 
-</details>
+---
 
-<details>
-    <summary>
-        <h3>Deploy to Heroku</h3>
-    </summary>
+## 🎮 Commands
 
-> Click on the button below to deploy on Heroku<br>
-    <a href="https://dashboard.heroku.com/new?template=https://github.com/zefronxd/AnonXMusic">
-        <img src="https://img.shields.io/badge/Deploy%20On%20Heroku-black?style=for-the-badge&logo=heroku"/>
-    </a>
-</details>
+| Command | Description |
+|---|---|
+| `/play [song/link]` | Play audio in voice chat |
+| `/vplay [song/link]` | Play video in voice chat |
+| `/pause` | Pause playback |
+| `/resume` | Resume playback |
+| `/skip` | Skip to next track |
+| `/stop` | Stop playback and clear queue |
+| `/seek [seconds]` | Seek to position |
+| `/queue` | Show current queue |
+| `/loop` | Toggle loop mode |
+| `/radio punjabi` | Play Punjabi new-hits radio from a direct live stream |
+| `/radio status` | Show the active radio source and reconnect status |
+| `/ping` | Check bot latency |
+| `/sametaste` | See your same-taste percentage across listeners |
 
-<hr>
+---
 
-<h2>⚙️ Configuration</h2>
-
-Edit <code>.env</code> (or set variables in your hosting environment):
-<details>
-    <summary>Here's an example of the .env file</summary>
-
-```env
-API_ID=123456
-API_HASH=abcdef1234567890
-BOT_TOKEN=123456:ABC-DEF
-OWNER_ID=123456789
-LOGGER_ID=-1001234567890
-MONGO_URL=mongodb+srv://
-SESSION=BQgfh...AA
-```
-
-> 📝 Check <a href="https://github.com/zefronxd/AnonXMusic/blob/master/config.py">config.py</a> for all available options.
-</details>
-
-<hr>
-
-<h2>🧐 Usage</h2>
-
-1. Add the bot to your Telegram group.  
-2. Promote it to <b>admin</b> with invite users permission.  
-3. Use commands in the chat to control playback:
-<details>
-    <summary>Commands overview</summary>
-    <pre>
-/play [song name or link] -> Play audio in the videochat
-/vplay [song name or link] -> Play video in the videochat
-/pause -> Pause playback
-/resume -> Resume playback
-/skip -> Skip to next track
-/stop -> Stop playback
-/seek -> Seeks the stream
-/queue -> Show queue
-    </pre>
-</details>
-
-<hr>
-
-<h2>❤️ Contributing</h2>
+## 🤝 Contributing
 
 Contributions are welcome!
 
-1. Fork the repository.  
-2. Create your branch: <code>git checkout -b feature/new</code>.  
-4. Commit changes: <code>git commit -m 'New feature'</code>.  
-5. Push: <code>git push origin feature/new</code>
-6. Open a Pull Request.
+1. Fork the repository
+2. Create your branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m 'Add some feature'`
+4. Push: `git push origin feature/your-feature`
+5. Open a Pull Request
 
-<hr>
+---
 
-<h2>🗒️ License</h2>
+## 📡 Support
 
-This project is licensed under the <b>MIT License</b> — see <a href="https://github.com/zefronxd/ZEFXMusic/blob/master/LICENSE">LICENSE</a> for details.
+- **Updates:** [@baka_updates](https://t.me/baka_updates)
+- **Support Group:** [Join here](https://t.me/+urALmsBSdB9hYWE5)
 
-<hr>
+---
 
-<h2>🤞 Updates and support</h2>
+## 📄 License
 
-- <a href="https://baka_updates.t.me">Updates channel</a>
-- <a href="https://t.me/+urALmsBSdB9hYWE5">Support group</a>
+This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
-<hr>
-
-<h2>👀 Acknowledgements</h2>
-
-- Inspired by other open-source Telegram music bots.
-- Thanks to all the <a href="https://github.com/zefronxd/ZEFXMusic/graphs/contributors">contributors</a>.
-
-<hr>
+---
 
 <div align="center">
 
-⭐ Enjoying the tunes? <b>Star the repo</b> — feedback keeps the rhythm going!
+⭐ **Enjoying the bot? Star the repo — it keeps the rhythm going!**
 
 </div>
