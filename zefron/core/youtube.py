@@ -114,6 +114,35 @@ async def _convert_to_wav(mp3_path: str) -> str:
     return mp3_path  # fallback: stream MP3 if conversion failed
 
 
+async def _probe_duration(file_path: str) -> int:
+    """Read the actual duration of a downloaded media file in seconds."""
+    if not file_path or (
+        isinstance(file_path, str)
+        and file_path.startswith(("http://", "https://"))
+    ):
+        return 0
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        output, _ = await proc.communicate()
+        if proc.returncode == 0:
+            return max(0, round(float(output.decode().strip())))
+    except (OSError, ValueError, TypeError):
+        pass
+    return 0
+
+
 def _cleanup_wav_cache(keep: int = 25) -> None:
     """Keep only the <keep> most-recently-used WAV files."""
     try:
@@ -647,6 +676,10 @@ class YouTube:
         if result:
             logger.info("Using ShrutiBot audio fallback: %s", video_id)
         return result
+
+    async def probe_duration(self, file_path: str) -> int:
+        """Return a local media file's duration for playback UI/timers."""
+        return await _probe_duration(file_path)
 
     async def download(
         self, video_id: str, video: bool = False, direct: bool = True

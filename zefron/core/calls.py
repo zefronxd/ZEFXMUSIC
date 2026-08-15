@@ -19,6 +19,14 @@ from zefron import (app, config, db, lang, logger,
 from zefron.helpers import Media, Track, buttons
 
 
+def _duration_text(seconds: int) -> str:
+    minutes, seconds = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
 class TgCall(PyTgCalls):
     def __init__(self):
         self.clients = []
@@ -266,6 +274,16 @@ class TgCall(PyTgCalls):
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
             self._schedule_next(chat_id)
             return
+
+        # Direct-link metadata can legitimately omit duration when the
+        # metadata service is unavailable.  Probe the downloaded file before
+        # rendering the now-playing card so it never shows 0:00 and the
+        # end-of-track timer has the correct value.
+        if isinstance(media, Track) and not media.duration_sec:
+            duration_sec = await yt.probe_duration(media.file_path)
+            if duration_sec:
+                media.duration_sec = duration_sec
+                media.duration = _duration_text(duration_sec)
 
         is_radio = getattr(media, "duration", "") == "∞"
         is_remote = isinstance(media.file_path, str) and media.file_path.startswith(
