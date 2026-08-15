@@ -11,6 +11,7 @@ import asyncio
 import aiohttp
 import threading
 from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from py_yt import Playlist, VideosSearch
 
@@ -391,6 +392,41 @@ class YouTube:
             r"|playlist\?list=PL[A-Za-z0-9_-]+|[A-Za-z0-9_-]{11}))\S*"
         )
 
+    @staticmethod
+    def video_id(url: str) -> str | None:
+        """Extract a YouTube video ID without treating ``-``/``_`` specially.
+
+        A few valid YouTube IDs begin with a dash or underscore.  Splitting
+        URLs by punctuation or passing the whole URL through a search API can
+        turn those links into unrelated search results, so direct links are
+        parsed locally first.
+        """
+        if not isinstance(url, str) or not url.strip():
+            return None
+
+        value = url.strip()
+        parsed = urlparse(value if "://" in value else f"https://{value}")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if host in {"youtu.be", "www.youtu.be"}:
+            candidate = parsed.path.strip("/").split("/", 1)[0]
+        elif host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}:
+            if parsed.path == "/watch":
+                candidate = parse_qs(parsed.query).get("v", [""])[0]
+            elif parsed.path.startswith(("/shorts/", "/embed/", "/live/")):
+                candidate = parsed.path.split("/", 2)[2]
+            else:
+                candidate = ""
+        else:
+            return None
+
+        candidate = candidate.split("?", 1)[0].split("&", 1)[0]
+        return candidate if re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate) else None
+
+    @classmethod
+    def canonical_url(cls, url: str) -> str | None:
+        video_id = cls.video_id(url)
+        return f"https://www.youtube.com/watch?v={video_id}" if video_id else None
+
     # ── Cookies (yt-dlp fallback only) ────────────────────────────────────
 
     def get_cookies(self):
@@ -444,6 +480,11 @@ class YouTube:
     # ── Search ─────────────────────────────────────────────────────────────
 
     async def search(self, query: str, m_id: int, video: bool = False) -> Track | None:
+        # A direct URL is not a search query.  In particular, a URL whose ID
+        # starts with ``-`` or ``_`` must resolve to that exact video.
+        if self.video_id(query):
+            return await self.get_track(query, m_id, video=video)
+
         # OneGrab search
         if config.ONEGRAB_API_KEY:
             data = await self._api_get("/api/search", {"query": query})
@@ -490,25 +531,69 @@ class YouTube:
     # ── Track metadata from URL ────────────────────────────────────────────
 
     async def get_track(self, url: str, m_id: int, video: bool = False) -> Track | None:
-        data = await self._api_get("/api/get_url", {"url": url})
+        canonical = self.canonical_url(url) or url
+        requested_id = self.video_id(canonical)
+        data = await self._api_get("/api/get_url", {"url": canonical})
         if data and data.get("results"):
             r = data["results"][0]
-            yt_url = r.get("url", url)
-            vid_id = r.get("id", "")
-            dur_sec = int(r.get("duration") or 0)
-            return Track(
-                id=vid_id,
-                channel_name=r.get("channel"),
-                duration=_secs_to_str(dur_sec),
-                duration_sec=dur_sec,
-                message_id=m_id,
-                title=(r.get("title") or "")[:25],
-                thumbnail=(r.get("thumbnail") or "").split("?")[0],
-                url=yt_url,
-                view_count=r.get("views"),
-                video=video,
-            )
-        return None
+            yt_url = r.get("url", canonical)
+            vid_id = r.get("id", "") or self.video_id(canonical)
+            # Never let a flaky metadata/search response replace a direct
+            # link with another video.
+            if requested_id and vid_id != requested_id:
+                data = None
+            else:
+                dur_sec = int(r.get("duration") or 0)
+                return Track(
+                    id=vid_id,
+                    channel_name=r.get("channel"),
+                    duration=_secs_to_str(dur_sec),
+                    duration_sec=dur_sec,
+                    message_id=m_id,
+                    title=(r.get("title") or "")[:25],
+                    thumbnail=(r.get("thumbnail") or "").split("?")[0],
+                    url=yt_url,
+                    view_count=r.get("views"),
+                    video=video,
+                )
+
+        # OneGrab is useful for duration metadata, but it is not always
+        # available.  YouTube's oEmbed endpoint still gives us the exact
+        # title/channel/thumbnail while the media provider handles playback.
+        video_id = self.video_id(canonical)
+        if not video_id:
+            return None
+
+        title = f"YouTube video {video_id}"
+        channel = ""
+        thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    "https://www.youtube.com/oembed",
+                    params={"url": canonical, "format": "json"},
+                ) as response:
+                    if response.status == 200:
+                        metadata = await response.json()
+                        title = metadata.get("title") or title
+                        channel = metadata.get("author_name") or ""
+                        thumbnail = metadata.get("thumbnail_url") or thumbnail
+        except Exception as ex:
+            logger.warning("YouTube oEmbed lookup failed for %s: %s", video_id, ex)
+
+        return Track(
+            id=video_id,
+            channel_name=channel,
+            duration="0:00",
+            duration_sec=0,
+            message_id=m_id,
+            title=title[:25],
+            thumbnail=thumbnail.split("?")[0],
+            url=canonical,
+            view_count="",
+            video=video,
+        )
 
     # ── Playlist ───────────────────────────────────────────────────────────
 

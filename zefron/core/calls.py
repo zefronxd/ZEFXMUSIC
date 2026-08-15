@@ -662,16 +662,25 @@ class TgCall(PyTgCalls):
                         if not current:
                             return
 
-                        # A stream ending well before its expected duration is
-                        # usually a transient source/VC drop, not a completed
-                        # song. Reconnect the same track instead of skipping it.
+                        # Remote streams can end early when a CDN connection
+                        # drops, so reconnect those.  Direct audio providers
+                        # return local WAV/MP3 files; for those, StreamEnded is
+                        # the normal end-of-song signal.  Treating a local
+                        # file as an early remote failure made /playfav replay
+                        # the same favourite instead of advancing the queue.
                         duration = getattr(current, "duration_sec", 0) or 0
                         elapsed = getattr(current, "time", 0) or 0
+                        file_path = getattr(current, "file_path", None)
+                        is_remote = isinstance(file_path, str) and file_path.startswith(
+                            ("http://", "https://")
+                        )
                         unexpected_end = bool(
-                            duration and elapsed < max(duration - 5, 5)
+                            is_remote and duration and elapsed < max(duration - 5, 5)
                         )
 
-                        if unexpected_end or getattr(current, "duration", "") == "∞":
+                        if is_remote and (
+                            unexpected_end or getattr(current, "duration", "") == "∞"
+                        ):
                             try:
                                 await asyncio.sleep(0.5)
                                 await self.replay(chat_id)
