@@ -68,7 +68,7 @@ async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
                     )
                 )
                 return False
-        return await _check_voice_admin()
+        return True
     except errors.ChatAdminRequired:
         await m.reply_text(m.lang["admin_required"])
         return False
@@ -129,7 +129,7 @@ async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
             await client.resolve_peer(chat_id)
         except Exception:
             pass
-        return await _check_voice_admin()
+        return True
 
 
 def checkUB(play):

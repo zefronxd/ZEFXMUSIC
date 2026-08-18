@@ -11,8 +11,8 @@ handler.
 - Workflow: `Start application`
 - Command: `uv run --python 3.11 python3 -m zefron`
 - Required runtime configuration is supplied through Replit Secrets.
-- Playback assistants must be Telegram administrators with permission to
-  manage voice/video chats in groups where music is used.
+- Playback assistants only need to be members of the group. A group admin
+  must start the voice chat first; the assistant then joins the active call.
 
 ## User preferences
 

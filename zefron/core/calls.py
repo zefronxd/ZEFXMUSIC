@@ -98,9 +98,8 @@ class TgCall(PyTgCalls):
     async def prepare_call(self, chat_id: int) -> bool:
         """Join the voice chat before media preparation finishes.
 
-        PyTgCalls accepts an empty stream and keeps the call connection alive.
-        The later ``play_media`` call then replaces that empty source instead
-        of waiting for the assistant to join after a download completes.
+        This only joins an already-running voice chat. A normal member cannot
+        create a new Telegram voice chat, so callers must start one first.
         """
         if await db.get_call(chat_id):
             return True
@@ -113,10 +112,13 @@ class TgCall(PyTgCalls):
                 await client.play(
                     chat_id=chat_id,
                     stream=None,
-                    config=types.GroupCallConfig(auto_start=True),
+                    config=types.GroupCallConfig(auto_start=False),
                 )
                 await db.add_call(chat_id)
             return True
+        except exceptions.NoActiveGroupCall:
+            logger.info("No active voice chat to join in %s", chat_id)
+            return False
         except Exception:
             logger.exception("Could not pre-join voice chat %s", chat_id)
             return False
@@ -388,9 +390,9 @@ class TgCall(PyTgCalls):
                         await client.play(
                             chat_id=chat_id,
                             stream=stream,
-                            # Let PyTgCalls start the group call immediately when
-                            # needed instead of requiring a second start round trip.
-                            config=types.GroupCallConfig(auto_start=True),
+                            # Join an existing call. The assistant is not
+                            # required to be an administrator.
+                            config=types.GroupCallConfig(auto_start=False),
                         )
                         log_timing(
                             "playback.start",
@@ -491,15 +493,14 @@ class TgCall(PyTgCalls):
             self._schedule_next(chat_id)
         except ChatAdminRequired:
             logger.warning(
-                "Assistant is not an admin in voice chat %s; stopping playback",
+                "Could not join voice chat %s without an active call",
                 chat_id,
             )
             await self.stop(chat_id)
             await message.edit_text(
                 _lang.get(
-                    "play_assistant_admin",
-                    "⚠️ Please promote the assistant account to an administrator "
-                    "with permission to manage voice/video chats, then try again.",
+                    "error_no_call",
+                    "📵 Please start a voice chat first, then try again.",
                 )
             )
         except (ChannelPrivate, ChannelInvalid):
