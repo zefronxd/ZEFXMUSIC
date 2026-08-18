@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class Config:
     def __init__(self):
         self.API_ID = int(getenv("API_ID", 0))
@@ -14,7 +15,9 @@ class Config:
         self.LOGGER_ID = int(getenv("LOGGER_ID", 0))
         self.OWNER_ID = int(getenv("OWNER_ID", 0))
 
-        self.DURATION_LIMIT = int(getenv("DURATION_LIMIT") or getenv("SONG_DURATION_LIMIT", 60)) * 60
+        self.DURATION_LIMIT = (
+            int(getenv("DURATION_LIMIT") or getenv("SONG_DURATION_LIMIT", 60)) * 60
+        )
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", 20))
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", 20))
         self.SPOTIFY_QUEUE_LIMIT = 100
@@ -23,22 +26,27 @@ class Config:
         self.SESSION2 = getenv("SESSION2", None)
         self.SESSION3 = getenv("SESSION3", None)
 
-        self.SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/zefron_musicworld")
+        self.SUPPORT_CHANNEL = getenv(
+            "SUPPORT_CHANNEL", "https://t.me/zefron_musicworld"
+        )
         self.SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+urALmsBSdB9hYWE5")
 
         # Assistant cleanup compatibility with the imported auto-leave
         # feature. Keep AUTO_LEAVE working for existing deployments.
-        self.AUTO_LEAVING_ASSISTANT: bool = getenv(
-            "AUTO_LEAVING_ASSISTANT",
-            getenv("AUTO_LEAVE", "False"),
-        ).lower() == "true"
+        self.AUTO_LEAVING_ASSISTANT: bool = (
+            getenv(
+                "AUTO_LEAVING_ASSISTANT",
+                getenv("AUTO_LEAVE", "False"),
+            ).lower()
+            == "true"
+        )
         self.AUTO_LEAVE = self.AUTO_LEAVING_ASSISTANT
         self.AUTO_LEAVE_ASSISTANT_TIME = max(
             int(getenv("AUTO_LEAVE_ASSISTANT_TIME", 3600)),
             300,
         )
         self.AUTO_END: bool = getenv("AUTO_END", "False").lower() == "true"
-    
+
         self.THUMB_GEN: bool = getenv("THUMB_GEN", "True").lower() == "true"
         self.VIDEO_PLAY: bool = getenv("VIDEO_PLAY", "True").lower() == "true"
 
@@ -63,8 +71,8 @@ class Config:
             or getenv("SHRUTI_API_URL")
             or "https://api01.shrutibots.site"
         )
-        self.SHRUTI_API_KEY = getenv("APIKey") or getenv("SHRUTI_API_KEY")
-        self.SHRUTI_API_KEY2 = getenv("SHRUTI_API_KEY2")
+        self.SHRUTI_API_KEY = "ShrutiBotsYqjNN7t6SuBLh3oi4edd"
+        self.SHRUTI_API_KEY2 = "ShrutiBotsdZvv4iyovLZxFlVzZhv4"
 
         self.LASTFM_API_KEY = getenv("LASTFM_API_KEY")
         self.LASTFM_SHARED_SECRET = getenv("LASTFM_SHARED_SECRET")
@@ -72,7 +80,8 @@ class Config:
         self.LASTFM_SHARED_SECRET_2 = getenv("LASTFM_SHARED_SECRET_2")
 
         self.COOKIES_URL = [
-            url for url in getenv("COOKIES_URL", "").split(" ")
+            url
+            for url in getenv("COOKIES_URL", "").split(" ")
             if url and "batbin.me" in url
         ]
         self.DEFAULT_THUMB = getenv("DEFAULT_THUMB", "https://d.uguu.se/UBQqgQsK.jpg")
@@ -96,14 +105,25 @@ class Config:
             "https://files.catbox.moe/gl5rg8.jpg",
         ]
         from random import choice as _choice
+
         self.START_IMG = getenv("START_IMG") or _choice(_start_imgs)
         self._start_imgs = _start_imgs  # kept for per-request random picks
 
     def check(self):
         missing = [
             var
-            for var in ["API_ID", "API_HASH", "BOT_TOKEN", "MONGO_URL", "LOGGER_ID", "OWNER_ID", "SESSION1"]
+            for var in [
+                "API_ID",
+                "API_HASH",
+                "BOT_TOKEN",
+                "MONGO_URL",
+                "LOGGER_ID",
+                "OWNER_ID",
+                "SESSION1",
+            ]
             if not getattr(self, var)
         ]
         if missing:
-            raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
+            raise SystemExit(
+                f"Missing required environment variables: {', '.join(missing)}"
+            )
