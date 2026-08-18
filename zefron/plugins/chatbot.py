@@ -168,7 +168,10 @@ def is_prompt_leaking(ai_text: str) -> bool:
 
 async def debounced_process_ai_reply(client, message, text, bot_reply_text, user_id):
     try:
-        await asyncio.sleep(random.uniform(3.0, 4.5)) 
+        # The old 3–4.5 second artificial delay made every valid message feel
+        # stuck. A short yield keeps typing indicators useful without delaying
+        # the actual Gemini request.
+        await asyncio.sleep(0.2)
         
         allowed, wait_str = await check_usage_and_allow(user_id)
         if not allowed:
@@ -185,10 +188,7 @@ async def debounced_process_ai_reply(client, message, text, bot_reply_text, user
             text, user_id, fullname, groupname, username, bot_reply_text, known_info
         )
 
-        if reply:
-            if is_prompt_leaking(reply):
-                return
-
+        if reply and not is_prompt_leaking(reply):
             await message.reply_text(reply)
             asyncio.create_task(increment_message_and_tokens(user_id, in_t, out_t))
             
@@ -197,6 +197,12 @@ async def debounced_process_ai_reply(client, message, text, bot_reply_text, user
                 if info:
                     asyncio.create_task(save_user_personal_info(user_id, info))
                     asyncio.create_task(update_cached_known_info(user_id, info))
+        else:
+            # Never leave a valid user message unanswered when the upstream
+            # model is unavailable, rate-limited, or returns malformed output.
+            await message.reply_text(
+                "sorry, i'm having trouble replying right now. please try again."
+            )
     except Exception as e:
         logger.error(f"Chatbot Handler Error inside debounced process: {e}")
     finally:
@@ -237,7 +243,15 @@ async def chat_handler(client: Client, message):
     USER_DEBOUNCE_LOCK[user_id] = True
 
     try:
-        asyncio.create_task(client.send_chat_action(message.chat.id, ChatAction.TYPING))
+        async def _safe_typing() -> None:
+            try:
+                await client.send_chat_action(message.chat.id, ChatAction.TYPING)
+            except Exception as ex:
+                # Typing is optional. A missing chat permission must never
+                # create an unhandled background task or block the reply.
+                logger.debug("Typing indicator unavailable: %s", ex)
+
+        asyncio.create_task(_safe_typing(), name=f"typing:{message.chat.id}")
         
         bot_reply_text = None
         if is_reply and message.reply_to_message.text:

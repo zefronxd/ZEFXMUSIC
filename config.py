@@ -63,16 +63,16 @@ class Config:
         self.SPOTIFY_CLIENT_SECRET = getenv("SPOTIFY_CLIENT_SECRET")
         # Kept for the non-Spotify search fallback used by older imports.
         self.ONEGRAB_API_KEY = getenv("ONEGRAB_API_KEY")
-        # ShrutiAPI is the only provider used for /vplay.  Keep its
-        # connection details in environment variables so the API can be
-        # changed without touching the playback code.
+        # ShrutiAPI is the only provider used for /vplay. Keep its
+        # connection details in environment variables so credentials are
+        # never baked into the source code.
         self.SHRUTI_API_URL = (
             getenv("ApiUrl")
             or getenv("SHRUTI_API_URL")
             or "https://api01.shrutibots.site"
         )
-        self.SHRUTI_API_KEY = "ShrutiBotsYqjNN7t6SuBLh3oi4edd"
-        self.SHRUTI_API_KEY2 = "ShrutiBotsdZvv4iyovLZxFlVzZhv4"
+        self.SHRUTI_API_KEY = getenv("APIKey") or getenv("SHRUTI_API_KEY")
+        self.SHRUTI_API_KEY2 = getenv("APIKey2") or getenv("SHRUTI_API_KEY2")
 
         self.LASTFM_API_KEY = getenv("LASTFM_API_KEY")
         self.LASTFM_SHARED_SECRET = getenv("LASTFM_SHARED_SECRET")

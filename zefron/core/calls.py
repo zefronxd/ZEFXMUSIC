@@ -8,8 +8,15 @@ import time
 
 from ntgcalls import (ConnectionNotFound, TelegramServerError,
                       RTMPStreamingUnsupported, ConnectionError)
-from pyrogram.errors import (ChatSendMediaForbidden, ChatSendPhotosForbidden,
-                             MessageIdInvalid)
+from pyrogram.errors import (
+    ChatAdminRequired,
+    ChatSendMediaForbidden,
+    ChatSendPhotosForbidden,
+    ChannelInvalid,
+    ChannelPrivate,
+    FloodWait,
+    MessageIdInvalid,
+)
 from pyrogram.types import InputMediaPhoto, Message
 from pytgcalls import PyTgCalls, exceptions, types
 from pytgcalls.pytgcalls_session import PyTgCallsSession
@@ -320,6 +327,31 @@ class TgCall(PyTgCalls):
             _ffmpeg = None
 
         is_video = bool(media.video)
+        if not is_remote and not await yt.has_media_stream(
+            media.file_path, video=is_video
+        ):
+            logger.warning(
+                "Rejecting invalid local %s source for %s",
+                "video" if is_video else "audio",
+                getattr(media, "id", "unknown"),
+            )
+            if isinstance(media, Track) and not is_video:
+                yt.invalidate_media(media.file_path)
+                media.file_path = await yt.download(
+                    media.id, video=False, direct=False
+                )
+                if media.file_path and await yt.has_media_stream(media.file_path):
+                    return await self.play_media(
+                        chat_id,
+                        message,
+                        media,
+                        seek_time,
+                        allow_shruti_retry=False,
+                    )
+            await message.edit_text(_lang["error_no_audio"])
+            self._schedule_next(chat_id)
+            return
+
         stream = types.MediaStream(
             media_path=media.file_path,
             # Keep the VC contract explicit: PyTgCalls emits signed 16-bit
@@ -437,28 +469,61 @@ class TgCall(PyTgCalls):
                 allow_shruti_retry,
             ):
                 return
-            if (
-                isinstance(media, Track)
-                and not media.video
-                and isinstance(media.file_path, str)
-                and (
-                    media.file_path.startswith("https://youtubeapi")
-                    or yt.is_shruti_audio_stream(media.file_path)
-                )
-            ):
+            if isinstance(media, Track) and not media.video:
                 logger.warning(
-                    "Direct stream rejected for %s; trying audio fallback",
+                    "Audio source rejected for %s; trying local fallback",
                     media.id,
                 )
+                yt.invalidate_media(media.file_path)
+                media.file_path = None
                 media.file_path = await yt.download(
                     media.id, video=False, direct=False
                 )
-                if media.file_path:
+                if media.file_path and await yt.has_media_stream(media.file_path):
                     return await self.play_media(
-                        chat_id, message, media, seek_time
+                        chat_id,
+                        message,
+                        media,
+                        seek_time,
+                        allow_shruti_retry=False,
                     )
             await message.edit_text(_lang["error_no_audio"])
             self._schedule_next(chat_id)
+        except ChatAdminRequired:
+            logger.warning(
+                "Assistant is not an admin in voice chat %s; stopping playback",
+                chat_id,
+            )
+            await self.stop(chat_id)
+            await message.edit_text(
+                _lang.get(
+                    "play_assistant_admin",
+                    "⚠️ Please promote the assistant account to an administrator "
+                    "with permission to manage voice/video chats, then try again.",
+                )
+            )
+        except (ChannelPrivate, ChannelInvalid):
+            logger.warning("Assistant cannot access voice chat %s", chat_id)
+            await self.stop(chat_id)
+            await message.edit_text(
+                _lang.get(
+                    "play_assistant_access",
+                    "⚠️ The assistant cannot access this group. Add it to the "
+                    "group and try again.",
+                )
+            )
+        except FloodWait as ex:
+            logger.warning(
+                "Telegram rate-limited voice chat %s for %ss",
+                chat_id,
+                getattr(ex, "value", "a short time"),
+            )
+            await message.edit_text(
+                _lang.get(
+                    "play_rate_limited",
+                    "⏳ Telegram is rate-limiting playback. Please try again shortly.",
+                )
+            )
         except (ConnectionError, ConnectionNotFound, TelegramServerError):
             if generation != self._generation(chat_id):
                 return

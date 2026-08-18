@@ -223,6 +223,61 @@ async def _probe_duration(file_path: str) -> int:
     return 0
 
 
+async def _has_media_stream(file_path: str, video: bool = False) -> bool:
+    """Check that a local file contains the stream PyTgCalls will consume."""
+    if not file_path or (
+        isinstance(file_path, str)
+        and file_path.startswith(("http://", "https://"))
+    ):
+        return bool(file_path)
+    if not os.path.isfile(file_path) or os.path.getsize(file_path) <= 0:
+        return False
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0" if video else "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        output, _ = await proc.communicate()
+        return proc.returncode == 0 and bool(output.strip())
+    except (OSError, asyncio.CancelledError):
+        raise
+    except Exception:
+        return False
+
+
+def _remove_invalid_media(file_path: str | None) -> None:
+    """Remove a bad provider cache entry and its normalized companion."""
+    if not file_path or (
+        isinstance(file_path, str)
+        and file_path.startswith(("http://", "https://"))
+    ):
+        return
+    candidates = {
+        file_path,
+        file_path.replace(".wav", ".mp3"),
+        file_path.replace(".mp3", ".wav"),
+        f"{file_path}.dl",
+        f"{file_path}.part",
+    }
+    for candidate in candidates:
+        try:
+            if os.path.isfile(candidate):
+                os.remove(candidate)
+        except OSError:
+            pass
+
+
 def _cleanup_wav_cache(keep: int = 25) -> None:
     """Keep only the <keep> most-recently-used WAV files."""
     try:
@@ -255,11 +310,19 @@ async def _shruti_download_audio(video_id: str) -> str | None:
     mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
     wav_path = _wav_path(mp3_path)
 
-    # Return cached WAV immediately
+    # Return cached WAV immediately only when it is a real audio file. This
+    # prevents an HTML/JSON provider error saved with a non-zero size from
+    # reaching PyTgCalls as if it were an MP3.
     if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
-        return wav_path
+        if await _has_media_stream(wav_path):
+            return wav_path
+        _remove_invalid_media(wav_path)
 
-    # Download MP3 if not cached
+    # Download MP3 if not cached or if a stale cache entry failed validation.
+    if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0:
+        if not await _has_media_stream(mp3_path):
+            _remove_invalid_media(mp3_path)
+
     if not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
         downloaded = False
         for api_key_index, api_key in enumerate(SHRUTI_API_KEYS):
@@ -312,6 +375,11 @@ async def _shruti_download_audio(video_id: str) -> str | None:
         ):
             return None
 
+    if not await _has_media_stream(mp3_path):
+        logger.warning("ShrutiAPI returned an invalid audio file for %s", video_id)
+        _remove_invalid_media(mp3_path)
+        return None
+
     # Start playback from the compressed local file immediately.  The
     # normalized 48 kHz WAV remains a warm cache for the next request.
     result = mp3_path
@@ -335,7 +403,13 @@ async def _youtubeapi_download_audio(video_id: str) -> str | None:
     wav_path = _wav_path(media_path)
 
     if os.path.exists(wav_path) and os.path.getsize(wav_path) > 0:
-        return wav_path
+        if await _has_media_stream(wav_path):
+            return wav_path
+        _remove_invalid_media(wav_path)
+
+    if os.path.exists(media_path) and os.path.getsize(media_path) > 0:
+        if not await _has_media_stream(media_path):
+            _remove_invalid_media(media_path)
 
     if not (os.path.exists(media_path) and os.path.getsize(media_path) > 0):
         temp_path = media_path + ".dl"
@@ -381,6 +455,10 @@ async def _youtubeapi_download_audio(video_id: str) -> str | None:
                 pass
 
     if not os.path.exists(media_path) or os.path.getsize(media_path) == 0:
+        return None
+    if not await _has_media_stream(media_path):
+        logger.warning("youtubeapi returned an invalid audio file for %s", video_id)
+        _remove_invalid_media(media_path)
         return None
 
     # Avoid making a first-time request wait for a full PCM conversion.
@@ -880,6 +958,14 @@ class YouTube:
     async def probe_duration(self, file_path: str) -> int:
         """Return a local media file's duration for playback UI/timers."""
         return await _probe_duration(file_path)
+
+    async def has_media_stream(self, file_path: str, video: bool = False) -> bool:
+        """Return whether a local source has a usable audio/video stream."""
+        return await _has_media_stream(file_path, video=video)
+
+    def invalidate_media(self, file_path: str | None) -> None:
+        """Drop a failed local source before requesting a replacement."""
+        _remove_invalid_media(file_path)
 
     async def download(
         self, video_id: str, video: bool = False, direct: bool = True

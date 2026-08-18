@@ -20,6 +20,36 @@ async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
     explicitly.
     """
     client = await db.get_client(chat_id)
+
+    async def _check_voice_admin() -> bool:
+        try:
+            member = await client.get_chat_member(chat_id, "me")
+            status = getattr(member, "status", None)
+            if status == enums.ChatMemberStatus.OWNER:
+                return True
+            if status != enums.ChatMemberStatus.ADMINISTRATOR:
+                raise ValueError("assistant is not an administrator")
+            privileges = getattr(member, "privileges", None)
+            if privileges is not None and getattr(
+                privileges, "can_manage_video_chats", True
+            ) is False:
+                raise ValueError("assistant cannot manage voice chats")
+            return True
+        except Exception as ex:
+            logger.warning(
+                "Assistant %s cannot manage voice chat %s: %s",
+                getattr(client, "id", "unknown"),
+                chat_id,
+                ex,
+            )
+            notice = m.lang.get(
+                "play_assistant_admin",
+                "⚠️ Please promote the assistant account to an administrator "
+                "with permission to manage voice/video chats, then try again.",
+            )
+            await m.reply_text(notice)
+            return False
+
     try:
         member = await app.get_chat_member(chat_id, client.id)
         if member.status in [
@@ -38,7 +68,7 @@ async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
                     )
                 )
                 return False
-        return True
+        return await _check_voice_admin()
     except errors.ChatAdminRequired:
         await m.reply_text(m.lang["admin_required"])
         return False
@@ -99,7 +129,7 @@ async def ensure_assistant_in_chat(chat_id: int, m: types.Message) -> bool:
             await client.resolve_peer(chat_id)
         except Exception:
             pass
-        return True
+        return await _check_voice_admin()
 
 
 def checkUB(play):
