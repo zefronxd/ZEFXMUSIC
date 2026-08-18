@@ -4,6 +4,7 @@
 
 
 import asyncio
+import time
 
 from ntgcalls import (ConnectionNotFound, TelegramServerError,
                       RTMPStreamingUnsupported, ConnectionError)
@@ -17,6 +18,7 @@ from pytgcalls.types.raw import AudioParameters
 from zefron import (app, config, db, lang, logger,
                    queue, thumb, userbot, yt)
 from zefron.helpers import Media, Track, buttons
+from zefron.core.metrics import log_timing
 
 
 def _duration_text(seconds: int) -> str:
@@ -47,6 +49,7 @@ class TgCall(PyTgCalls):
             return
 
         async def _advance():
+            started = time.perf_counter()
             try:
                 # ``play_media`` can be called from inside ``_play_next``.
                 # Wait for that transition to release its guard instead of
@@ -54,6 +57,7 @@ class TgCall(PyTgCalls):
                 while chat_id in self._next_in_progress:
                     await asyncio.sleep(0.05)
                 await self.play_next(chat_id)
+                log_timing("queue.transition", started, chat_id=chat_id)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -262,6 +266,7 @@ class TgCall(PyTgCalls):
         seek_time: int = 0,
         allow_shruti_retry: bool = True,
     ) -> None:
+        started = time.perf_counter()
         # Language is only needed for UI/error messages.  Resolve the
         # assistant first so a cold chat does not wait on two database lookups
         # before the first audio packet can be sent to the VC.
@@ -356,6 +361,12 @@ class TgCall(PyTgCalls):
                             # Let PyTgCalls start the group call immediately when
                             # needed instead of requiring a second start round trip.
                             config=types.GroupCallConfig(auto_start=True),
+                        )
+                        log_timing(
+                            "playback.start",
+                            started,
+                            chat_id=chat_id,
+                            media_id=getattr(media, "id", "unknown"),
                         )
                         break
                     except (ConnectionError, ConnectionNotFound, TelegramServerError):

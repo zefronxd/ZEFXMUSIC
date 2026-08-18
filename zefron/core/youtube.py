@@ -10,23 +10,24 @@ import random
 import asyncio
 import aiohttp
 import threading
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from py_yt import Playlist, VideosSearch
 
 from zefron import config, logger
+from zefron.core.http import get_http_session
+from zefron.core.metrics import log_timing
 from zefron.helpers import Track, utils
 
 
 # ── ShrutiMusic API ────────────────────────────────────────────────────────
-# /vplay must always use these Shruti credentials.  Do not read the generic
-# APIKey/ApiUrl environment values here because imported projects may use
-# those names for a different service.
-SHRUTI_API_URL = "https://api01.shrutibots.site"
-SHRUTI_API_KEYS = (
-    "ShrutiBotsdZvv4iyovLZxFlVzZhv4",
-    "ShrutiBotswVCjLFds5hj34MDSFTxI",
+# /vplay provider details are supplied through Replit Secrets/environment.
+# Never keep provider credentials in source code.
+SHRUTI_API_URL = config.SHRUTI_API_URL.rstrip("/")
+SHRUTI_API_KEYS = tuple(
+    key for key in (config.SHRUTI_API_KEY, config.SHRUTI_API_KEY2) if key
 )
 
 # Audio provider order is intentional: youtubeapi first, ShrutiBot second.
@@ -42,6 +43,53 @@ DOWNLOAD_DIR = "downloads"
 
 _conv_locks: dict = {}
 _conv_lock_guard = threading.Lock()
+_download_slots = asyncio.Semaphore(4)
+_download_inflight: dict[str, asyncio.Task] = {}
+_background_tasks: set[asyncio.Task] = set()
+
+
+async def _write_response_to_file(
+    response: aiohttp.ClientResponse, path: str
+) -> int:
+    """Write streamed response chunks without blocking the event loop."""
+    total = 0
+    with open(path, "wb") as output:
+        async for chunk in response.content.iter_chunked(131072):
+            total += len(chunk)
+            await asyncio.to_thread(output.write, chunk)
+    return total
+
+
+def _track_background(task: asyncio.Task) -> None:
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _schedule_cache_cleanup() -> None:
+    _track_background(asyncio.create_task(
+        asyncio.to_thread(_cleanup_wav_cache, 25),
+        name="wav-cache-cleanup",
+    ))
+
+
+async def _deduplicated_download(key: str, operation):
+    """Share one bounded download task among all callers for the same media."""
+    task = _download_inflight.get(key)
+    if task is None or task.done():
+        async def _run():
+            async with _download_slots:
+                return await operation()
+
+        task = asyncio.create_task(_run(), name=f"download:{key}")
+        _download_inflight[key] = task
+
+    try:
+        # A cancelled Telegram handler must not cancel a download another
+        # handler is waiting for.
+        return await asyncio.shield(task)
+    finally:
+        if task.done() and _download_inflight.get(key) is task:
+            _download_inflight.pop(key, None)
 
 
 def _get_conv_lock(path: str) -> asyncio.Lock:
@@ -182,41 +230,39 @@ async def _shruti_download_audio(video_id: str) -> str | None:
     # Download MP3 if not cached
     if not (os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 0):
         downloaded = False
-        for api_key in SHRUTI_API_KEYS:
+        for api_key_index, api_key in enumerate(SHRUTI_API_KEYS):
             if downloaded:
                 break
             for attempt in range(2):
                 try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            f"{SHRUTI_API_URL}/download",
-                            params={
-                                "url": video_id,
-                                "type": "audio",
-                                "api_key": api_key,
-                            },
-                            timeout=aiohttp.ClientTimeout(total=300),
-                        ) as resp:
-                            if resp.status != 200:
-                                logger.warning(
-                                    "ShrutiAPI audio %s key=%s → HTTP %s",
-                                    video_id,
-                                    api_key[:12],
-                                    resp.status,
-                                )
-                                break
-                            tmp_dl = mp3_path + ".dl"
-                            with open(tmp_dl, "wb") as f:
-                                async for chunk in resp.content.iter_chunked(131072):
-                                    f.write(chunk)
-                            if os.path.exists(tmp_dl) and os.path.getsize(tmp_dl) > 0:
-                                os.replace(tmp_dl, mp3_path)
-                                downloaded = True
-                                break
+                    session = await get_http_session()
+                    async with session.get(
+                        f"{SHRUTI_API_URL}/download",
+                        params={
+                            "url": video_id,
+                            "type": "audio",
+                            "api_key": api_key,
+                        },
+                        timeout=aiohttp.ClientTimeout(total=300),
+                    ) as resp:
+                        if resp.status != 200:
+                            logger.warning(
+                                "ShrutiAPI audio %s provider_key=%s → HTTP %s",
+                                video_id,
+                                api_key_index + 1,
+                                resp.status,
+                            )
+                            break
+                        tmp_dl = mp3_path + ".dl"
+                        await _write_response_to_file(resp, tmp_dl)
+                        if os.path.exists(tmp_dl) and os.path.getsize(tmp_dl) > 0:
+                            os.replace(tmp_dl, mp3_path)
+                            downloaded = True
+                            break
                 except Exception as e:
                     logger.warning(
-                        "ShrutiAPI audio key=%s attempt %s failed: %s",
-                        api_key[:12],
+                        "ShrutiAPI audio provider_key=%s attempt %s failed: %s",
+                        api_key_index + 1,
                         attempt + 1,
                         e,
                     )
@@ -238,8 +284,7 @@ async def _shruti_download_audio(video_id: str) -> str | None:
     result = await _convert_to_wav(mp3_path)
 
     # Background cache housekeeping
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _cleanup_wav_cache, 25)
+    _schedule_cache_cleanup()
 
     return result
 
@@ -267,28 +312,28 @@ async def _youtubeapi_download_audio(video_id: str) -> str | None:
                 "quality": "360",
             }
             timeout = aiohttp.ClientTimeout(total=300)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(YOUTUBE_API_MEDIA_URL, params=params) as resp:
-                    if resp.status != 200:
-                        logger.warning(
-                            "youtubeapi audio %s → HTTP %s",
-                            video_id,
-                            resp.status,
-                        )
-                        return None
+            session = await get_http_session()
+            async with session.get(
+                YOUTUBE_API_MEDIA_URL, params=params, timeout=timeout
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "youtubeapi audio %s → HTTP %s",
+                        video_id,
+                        resp.status,
+                    )
+                    return None
 
-                    content_type = resp.headers.get("content-type", "").lower()
-                    if "json" in content_type or content_type.startswith("text/"):
-                        logger.warning(
-                            "youtubeapi audio %s returned non-media content (%s)",
-                            video_id,
-                            content_type or "unknown",
-                        )
-                        return None
+                content_type = resp.headers.get("content-type", "").lower()
+                if "json" in content_type or content_type.startswith("text/"):
+                    logger.warning(
+                        "youtubeapi audio %s returned non-media content (%s)",
+                        video_id,
+                        content_type or "unknown",
+                    )
+                    return None
 
-                    with open(temp_path, "wb") as output:
-                        async for chunk in resp.content.iter_chunked(131072):
-                            output.write(chunk)
+                await _write_response_to_file(resp, temp_path)
 
             if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
                 return None
@@ -305,8 +350,7 @@ async def _youtubeapi_download_audio(video_id: str) -> str | None:
         return None
 
     result = await _convert_to_wav(media_path)
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _cleanup_wav_cache, 25)
+    _schedule_cache_cleanup()
     return result
 
 
@@ -320,37 +364,39 @@ async def _shruti_download_video(video_id: str) -> str | None:
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path
 
-    for api_key in SHRUTI_API_KEYS:
+    for api_key_index, api_key in enumerate(SHRUTI_API_KEYS):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{SHRUTI_API_URL}/download",
-                    params={"url": video_id, "type": "video", "api_key": api_key},
-                    timeout=aiohttp.ClientTimeout(total=600),
-                ) as resp:
-                    if resp.status != 200:
-                        logger.warning(
-                            "ShrutiAPI video %s key=%s → HTTP %s",
-                            video_id,
-                            api_key[:12],
-                            resp.status,
-                        )
-                        continue
-                    content_type = resp.headers.get("content-type", "").lower()
-                    if "json" in content_type or "text/" in content_type:
-                        logger.warning(
-                            "ShrutiAPI video key=%s returned non-media content",
-                            api_key[:12],
-                        )
-                        continue
-                    with open(temp_path, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(131072):
-                            f.write(chunk)
+            session = await get_http_session()
+            async with session.get(
+                f"{SHRUTI_API_URL}/download",
+                params={"url": video_id, "type": "video", "api_key": api_key},
+                timeout=aiohttp.ClientTimeout(total=600),
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "ShrutiAPI video %s provider_key=%s → HTTP %s",
+                        video_id,
+                        api_key_index + 1,
+                        resp.status,
+                    )
+                    continue
+                content_type = resp.headers.get("content-type", "").lower()
+                if "json" in content_type or "text/" in content_type:
+                    logger.warning(
+                        "ShrutiAPI video provider_key=%s returned non-media content",
+                        api_key_index + 1,
+                    )
+                    continue
+                await _write_response_to_file(resp, temp_path)
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
                 os.replace(temp_path, file_path)
                 return file_path
         except Exception as e:
-            logger.warning("ShrutiAPI video key=%s failed: %s", api_key[:12], e)
+            logger.warning(
+                "ShrutiAPI video provider_key=%s failed: %s",
+                api_key_index + 1,
+                e,
+            )
             for path in (temp_path, file_path):
                 try:
                     if os.path.exists(path):
@@ -473,14 +519,16 @@ class YouTube:
 
     async def save_cookies(self, urls: list[str]) -> None:
         logger.info("Saving cookies from urls...")
-        async with aiohttp.ClientSession() as session:
-            for url in urls:
-                name = url.split("/")[-1]
-                link = "https://batbin.me/raw/" + name
-                async with session.get(link) as resp:
-                    resp.raise_for_status()
-                    with open(f"{self.cookie_dir}/{name}.txt", "wb") as fw:
-                        fw.write(await resp.read())
+        session = await get_http_session()
+        for url in urls:
+            name = url.split("/")[-1]
+            link = "https://batbin.me/raw/" + name
+            async with session.get(link) as resp:
+                resp.raise_for_status()
+                data = await resp.read()
+                await asyncio.to_thread(
+                    Path(f"{self.cookie_dir}/{name}.txt").write_bytes, data
+                )
         logger.info(f"Cookies saved in {self.cookie_dir}.")
 
     # ── URL validation ─────────────────────────────────────────────────────
@@ -498,10 +546,12 @@ class YouTube:
             params = {**params, "api_key": config.ONEGRAB_API_KEY}
         try:
             timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(f"{ONEGRAB_BASE}{path}", params=params) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
+            session = await get_http_session()
+            async with session.get(
+                f"{ONEGRAB_BASE}{path}", params=params, timeout=timeout
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
         except Exception as e:
             logger.warning("OneGrab API error: %s", e)
         return None
@@ -509,10 +559,18 @@ class YouTube:
     # ── Search ─────────────────────────────────────────────────────────────
 
     async def search(self, query: str, m_id: int, video: bool = False) -> Track | None:
+        started = time.perf_counter()
+
+        def _finish(track: Track | None, source: str) -> Track | None:
+            log_timing("youtube.search", started, source=source, found=bool(track))
+            return track
+
         # A direct URL is not a search query.  In particular, a URL whose ID
         # starts with ``-`` or ``_`` must resolve to that exact video.
         if self.video_id(query):
-            return await self.get_track(query, m_id, video=video)
+            return _finish(
+                await self.get_track(query, m_id, video=video), "direct_url"
+            )
 
         # OneGrab search
         if config.ONEGRAB_API_KEY:
@@ -522,7 +580,7 @@ class YouTube:
                 yt_url = r.get("url", "")
                 vid_id = r.get("id", "")
                 dur_sec = int(r.get("duration") or 0)
-                return Track(
+                return _finish(Track(
                     id=vid_id,
                     channel_name=r.get("channel"),
                     duration=_secs_to_str(dur_sec),
@@ -533,17 +591,17 @@ class YouTube:
                     url=yt_url,
                     view_count=r.get("views"),
                     video=video,
-                )
+                ), "onegrab")
 
         # Fallback: py_yt
         try:
             _search = VideosSearch(query, limit=1, with_live=False)
             results = await _search.next()
         except Exception:
-            return None
+            return _finish(None, "py_yt_error")
         if results and results["result"]:
             data = results["result"][0]
-            return Track(
+            return _finish(Track(
                 id=data.get("id"),
                 channel_name=data.get("channel", {}).get("name"),
                 duration=data.get("duration"),
@@ -554,8 +612,8 @@ class YouTube:
                 url=data.get("link"),
                 view_count=data.get("viewCount", {}).get("short"),
                 video=video,
-            )
-        return None
+            ), "py_yt")
+        return _finish(None, "not_found")
 
     # ── Track metadata from URL ────────────────────────────────────────────
 
@@ -598,16 +656,17 @@ class YouTube:
         thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
         try:
             timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    "https://www.youtube.com/oembed",
-                    params={"url": canonical, "format": "json"},
-                ) as response:
-                    if response.status == 200:
-                        metadata = await response.json()
-                        title = metadata.get("title") or title
-                        channel = metadata.get("author_name") or ""
-                        thumbnail = metadata.get("thumbnail_url") or thumbnail
+            session = await get_http_session()
+            async with session.get(
+                "https://www.youtube.com/oembed",
+                params={"url": canonical, "format": "json"},
+                timeout=timeout,
+            ) as response:
+                if response.status == 200:
+                    metadata = await response.json()
+                    title = metadata.get("title") or title
+                    channel = metadata.get("author_name") or ""
+                    thumbnail = metadata.get("thumbnail_url") or thumbnail
         except Exception as ex:
             logger.warning("YouTube oEmbed lookup failed for %s: %s", video_id, ex)
 
@@ -654,7 +713,7 @@ class YouTube:
 
     # ── Download ───────────────────────────────────────────────────────────
 
-    async def direct_stream(self, video_id: str) -> str | None:
+    async def _direct_stream_uncached(self, video_id: str) -> str | None:
         """Return a stable local audio source using the requested provider order.
 
         youtubeapi is always attempted first. ShrutiBot is the only fallback
@@ -677,6 +736,18 @@ class YouTube:
             logger.info("Using ShrutiBot audio fallback: %s", video_id)
         return result
 
+    async def direct_stream(self, video_id: str) -> str | None:
+        """Return one shared, bounded audio download for a video ID."""
+        if not video_id:
+            return None
+        started = time.perf_counter()
+        result = await _deduplicated_download(
+            f"audio:{video_id}",
+            lambda: self._direct_stream_uncached(video_id),
+        )
+        log_timing("media.download", started, media_id=video_id, video=False)
+        return result
+
     async def probe_duration(self, file_path: str) -> int:
         """Return a local media file's duration for playback UI/timers."""
         return await _probe_duration(file_path)
@@ -692,7 +763,12 @@ class YouTube:
 
         # ── Video: local ShrutiAPI MKV ─────────────────────────────────────
         if video:
-            result = await _shruti_download_video(video_id)
+            started = time.perf_counter()
+            result = await _deduplicated_download(
+                f"video:{video_id}",
+                lambda: _shruti_download_video(video_id),
+            )
+            log_timing("media.download", started, media_id=video_id, video=True)
             if result:
                 logger.info("ShrutiAPI video ready locally: %s", video_id)
             return result
@@ -741,3 +817,16 @@ class YouTube:
             return filename
 
         return await asyncio.to_thread(_dl)
+
+    async def close(self) -> None:
+        """Cancel media housekeeping/download tasks during shutdown."""
+        tasks_to_cancel = [
+            task for task in (*_background_tasks, *_download_inflight.values())
+            if not task.done()
+        ]
+        for task in tasks_to_cancel:
+            task.cancel()
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        _background_tasks.clear()
+        _download_inflight.clear()

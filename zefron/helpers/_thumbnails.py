@@ -10,7 +10,13 @@ from PIL import (Image, ImageDraw, ImageEnhance,
                  ImageFilter, ImageFont, ImageOps)
 
 from zefron import config, logger
+from zefron.core.http import get_http_session
 from zefron.helpers import Track
+
+
+def _write_bytes(path: str, data: bytes) -> None:
+    with open(path, "wb") as output:
+        output.write(data)
 
 
 class Thumbnail:
@@ -34,18 +40,21 @@ class Thumbnail:
     }
 
     async def start(self) -> None:
-        self.session = aiohttp.ClientSession(headers=self._HEADERS)
+        self.session = await get_http_session()
 
     async def close(self) -> None:
-        if self.session:
-            await self.session.close()
+        self.session = None
 
     async def _fetch_thumb(self, output_path: str, url: str) -> bool:
         """Download a thumbnail URL to disk. Returns True only on a real image."""
         if not url:
             return False
         try:
-            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with self.session.get(
+                url,
+                headers=self._HEADERS,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
                 if resp.status != 200:
                     return False
                 data = await resp.read()
@@ -55,8 +64,7 @@ class Thumbnail:
                 # Reject HTML error pages served with 200 status
                 if data[:6] in (b"<html>", b"<!DOC", b"<HTML>"):
                     return False
-                with open(output_path, "wb") as f:
-                    f.write(data)
+                await asyncio.to_thread(_write_bytes, output_path, data)
             return True
         except Exception:
             return False

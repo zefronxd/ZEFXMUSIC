@@ -11,6 +11,7 @@ import time
 import aiohttp
 
 from zefron import config, logger
+from zefron.core.http import get_http_session
 from zefron.helpers._dataclass import Track
 
 
@@ -77,11 +78,12 @@ async def _get_access_token() -> str | None:
         if _access_token and time.monotonic() < _token_expires_at - 30:
             return _access_token
         try:
-            async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-                async with session.post(
+            session = await get_http_session()
+            async with session.post(
                     f"{_SPOTIFY_ACCOUNTS}/api/token",
                     auth=aiohttp.BasicAuth(client_id, client_secret),
                     data={"grant_type": "client_credentials"},
+                    timeout=_TIMEOUT,
                 ) as response:
                     if response.status != 200:
                         logger.warning(
@@ -112,11 +114,12 @@ async def _spotify_get(
         return None
 
     try:
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(
+        session = await get_http_session()
+        async with session.get(
                 f"{_SPOTIFY_API}{path}",
                 params=params or {},
                 headers={"Authorization": f"Bearer {token}"},
+                timeout=_TIMEOUT,
             ) as response:
                 if response.status == 401 and retry_on_unauthorized:
                     _access_token = None
@@ -145,10 +148,11 @@ async def _fetch_public_meta(kind: str, spotify_id: str, spotify_url: str) -> li
     """
     try:
         embed_url = f"https://open.spotify.com/embed/{kind}/{spotify_id}"
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(
+        session = await get_http_session()
+        async with session.get(
                 embed_url,
                 headers={"User-Agent": "Mozilla/5.0"},
+                timeout=_TIMEOUT,
             ) as response:
                 if response.status != 200:
                     logger.warning(

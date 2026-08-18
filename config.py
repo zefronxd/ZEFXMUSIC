@@ -66,10 +66,10 @@ class Config:
         self.SHRUTI_API_KEY = getenv("APIKey") or getenv("SHRUTI_API_KEY")
         self.SHRUTI_API_KEY2 = getenv("SHRUTI_API_KEY2")
 
-        self.LASTFM_API_KEY = getenv("LASTFM_API_KEY", "d983c47914d76833e419d2dd8fdcf4ce")
-        self.LASTFM_SHARED_SECRET = getenv("LASTFM_SHARED_SECRET", "b76e8a96fb70385fd2e024a0ac21dbb2")
-        self.LASTFM_API_KEY_2 = "557160c9e176a2d56f5fc66278e88927"
-        self.LASTFM_SHARED_SECRET_2 = "44805e4f0c2083b83a987d7e877a3483"
+        self.LASTFM_API_KEY = getenv("LASTFM_API_KEY")
+        self.LASTFM_SHARED_SECRET = getenv("LASTFM_SHARED_SECRET")
+        self.LASTFM_API_KEY_2 = getenv("LASTFM_API_KEY_2")
+        self.LASTFM_SHARED_SECRET_2 = getenv("LASTFM_SHARED_SECRET_2")
 
         self.COOKIES_URL = [
             url for url in getenv("COOKIES_URL", "").split(" ")

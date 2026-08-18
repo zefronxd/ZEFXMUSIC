@@ -5,10 +5,14 @@
 import asyncio
 import logging
 import re
+import time
 import urllib.parse
 
 import aiohttp
 import yt_dlp
+
+from zefron.core.http import get_http_session
+from zefron.core.metrics import log_timing
 
 logger = logging.getLogger(__name__)
 
@@ -420,7 +424,10 @@ async def _lastfm_similar(
     if not api_key:
         return []
 
-    async with aiohttp.ClientSession() as session:
+    # Reuse the application's provider session instead of opening a new
+    # connector for every recommendation lookup.
+    session = await get_http_session()
+    if session:
 
         orig_artist_lower = artist.lower()
 
@@ -673,7 +680,7 @@ _REC_CACHE_TTL_DAYS = 7  # MongoDB documents expire after this many days
 
 _REC_CACHE_VERSION = "v2"  # bump when filter logic changes to invalidate stale entries
 _RECOMMEND_SLOTS = asyncio.Semaphore(4)
-_RECOMMEND_INFLIGHT: dict[tuple[int, str], asyncio.Task] = {}
+_RECOMMEND_INFLIGHT: dict[tuple[str, str, str], asyncio.Task] = {}
 
 
 def _rec_cache_key(title: str, artist: str) -> str:
@@ -728,6 +735,7 @@ async def fetch_related_songs(
       4. Store fresh results in MongoDB rec_cache before returning.
     """
     from zefron import config as _cfg  # late import to avoid circular
+    started = time.perf_counter()
 
     # Pick best artist: prefer clean channel, fall back to title parsing, skip labels
     artist = _best_artist(channel, title)
@@ -762,6 +770,7 @@ async def fetch_related_songs(
     cached = await _mongo_get_rec(cache_key)
     if cached:
         logger.info("rec_cache HIT for %r — skipping Last.fm/yt-dlp", cache_key)
+        log_timing("recommendation.cache_hit", started, key=cache_key)
         # Apply same-artist filter to cached results too (cache may be stale)
         return _filter_same_artist(cached)
 
@@ -829,6 +838,7 @@ async def fetch_related_songs(
 
     # ── 3. Persist to MongoDB ─────────────────────────────────────────────────
     await _mongo_set_rec(cache_key, songs)
+    log_timing("recommendation.fetch", started, count=len(songs))
     return songs
 
 
@@ -856,26 +866,32 @@ async def fetch_and_cache(
     chat_id: int, video_id: str, title: str, channel: str = ""
 ) -> None:
     """Fetch related songs and store them in the cache (for background tasks)."""
-    key = (chat_id, video_id)
+    key = (
+        video_id,
+        _normalize_title(title),
+        _normalize_title(channel),
+    )
     current = _RECOMMEND_INFLIGHT.get(key)
-    if current and not current.done():
-        return
+    if current is None or current.done():
+        async def _fetch():
+            # Recommendations are optional UI work. Bound network/search
+            # concurrency so active voice chats keep priority.
+            async with _RECOMMEND_SLOTS:
+                return await fetch_related_songs(video_id, title, channel)
 
-    task = asyncio.current_task()
-    _RECOMMEND_INFLIGHT[key] = task
+        current = asyncio.create_task(_fetch(), name=f"recommendation:{video_id}")
+        _RECOMMEND_INFLIGHT[key] = current
     try:
-        # Recommendations are optional UI work.  Bound network/search
-        # concurrency so a playlist or many active VCs cannot starve audio
-        # handling and Telegram update processing.
-        async with _RECOMMEND_SLOTS:
-            songs = await fetch_related_songs(video_id, title, channel)
+        # Every caller waits for the same upstream work, while each chat still
+        # receives its own recommendation UI cache entry.
+        songs = await asyncio.shield(current)
         cache_recommendations(chat_id, title, songs)
     except asyncio.CancelledError:
         raise
     except Exception as ex:
         logger.debug("Background recommendation fetch failed: %s", ex)
     finally:
-        if _RECOMMEND_INFLIGHT.get(key) is task:
+        if current.done() and _RECOMMEND_INFLIGHT.get(key) is current:
             _RECOMMEND_INFLIGHT.pop(key, None)
 
 

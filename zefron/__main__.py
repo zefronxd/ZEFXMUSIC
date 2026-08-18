@@ -42,7 +42,7 @@ async def main():
     logger.info(f"Loaded {len(app.sudoers)} sudo users.")
 
     await idle()
-    asyncio.create_task(stop())
+    await stop()
 
 
 if __name__ == "__main__":

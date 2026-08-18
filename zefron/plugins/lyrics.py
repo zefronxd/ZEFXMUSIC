@@ -8,6 +8,7 @@ import urllib.parse
 from pyrogram import filters, types
 
 from zefron import app, lang
+from zefron.core.http import get_http_session
 
 
 LRCLIB_SEARCH = "https://lrclib.net/api/search"
@@ -87,10 +88,10 @@ async def lyrics_hndlr(_, m: types.Message) -> None:
     query = " ".join(m.command[1:]).strip()
     sent  = await m.reply_text(m.lang["lyrics_searching"].format(query))
 
-    async with aiohttp.ClientSession() as session:
-        result = await _fetch_lrclib(session, query)
-        if not result:
-            result = await _fetch_ovh(session, query)
+    session = await get_http_session()
+    result = await _fetch_lrclib(session, query)
+    if not result:
+        result = await _fetch_ovh(session, query)
 
     if not result:
         return await sent.edit_text(m.lang["lyrics_not_found"].format(query))

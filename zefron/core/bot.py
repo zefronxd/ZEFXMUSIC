@@ -91,6 +91,7 @@ class Bot(pyrogram.Client):
         self.logger = config.LOGGER_ID
         self.bl_users = pyrogram.filters.user()
         self.sudoers = pyrogram.filters.user(self.owner)
+        self._cleanup_task: asyncio.Task | None = None
 
     async def boot(self):
         """
@@ -100,7 +101,9 @@ class Bot(pyrogram.Client):
             SystemExit: If the bot fails to access the log group or is not an administrator in the logger group.
         """
 
-        asyncio.create_task(auto_clean_downloads())
+        self._cleanup_task = asyncio.create_task(
+            auto_clean_downloads(), name="download-cleanup"
+        )
         await init_db_pool()
         await super().start()
         self.id = self.me.id
@@ -122,5 +125,12 @@ class Bot(pyrogram.Client):
         """
         Asynchronously stops the bot.
         """
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+        self._cleanup_task = None
         await super().stop()
         logger.info("Bot stopped.")

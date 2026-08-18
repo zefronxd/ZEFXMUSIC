@@ -11,6 +11,7 @@ from pyrogram import Client, filters
 from pyrogram.enums import ChatType, ChatAction 
 from collections import OrderedDict
 from zefron import app, logger
+from zefron.core.http import get_http_session
 from zefron.core.database import (
     check_usage_and_allow, 
     increment_message_and_tokens,
@@ -78,8 +79,10 @@ async def fetch_gemini(messages, api_key):
         
     payload = {"contents": contents}
     
-    async with aiohttp.ClientSession() as session:
-        async with session.post(API_URL.format(api_key), json=payload, timeout=10) as resp:
+    session = await get_http_session()
+    async with session.post(
+        API_URL.format(api_key), json=payload, timeout=10
+    ) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 try:

@@ -39,6 +39,16 @@ async def get_db_pool():
         await init_db_pool()
     return db_pool
 
+
+async def close_db_pool():
+    """Close PostgreSQL connections during graceful application shutdown."""
+    global db_pool
+    pool = db_pool
+    db_pool = None
+    if pool:
+        await pool.close()
+        logger.info("PostgreSQL connection pool closed.")
+
 async def execute_query(query: str, *args):
     pool = await get_db_pool()
     async with pool.acquire() as conn:

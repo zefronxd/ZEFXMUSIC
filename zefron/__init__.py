@@ -36,6 +36,8 @@ boot = time.time()
 
 from zefron.core.bot import Bot
 app = Bot()
+from zefron.core.database import close_db_pool
+from zefron.core.http import close_http_session
 
 from zefron.core.dir import ensure_dirs
 ensure_dirs()
@@ -73,7 +75,10 @@ async def stop() -> None:
 
     await app.exit()
     await userbot.exit()
+    await yt.close()
     await db.close()
     await thumb.close()
+    await close_db_pool()
+    await close_http_session()
 
     logger.info("Stopped.\n")

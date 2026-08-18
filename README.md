@@ -92,6 +92,17 @@ SESSION=BQgfh...AA
 | `ONEGRAB_API_KEY` | ❌ | — | Legacy search API key for non-Spotify fallback |
 | `SPOTIFY_CLIENT_ID` | ❌* | — | Spotify Developer app client ID |
 | `SPOTIFY_CLIENT_SECRET` | ❌* | — | Spotify Developer app client secret |
+| `ApiUrl` / `SHRUTI_API_URL` | ❌ | — | Shruti media provider base URL |
+| `APIKey` / `SHRUTI_API_KEY` | ❌ | — | Shruti media provider credential |
+| `SHRUTI_API_KEY2` | ❌ | — | Optional second Shruti provider credential |
+| `LASTFM_API_KEY` | ❌ | — | Last.fm recommendation API key |
+| `LASTFM_SHARED_SECRET` | ❌ | — | Last.fm shared secret, if required |
+| `LASTFM_API_KEY_2` | ❌ | — | Optional Last.fm fallback API key |
+| `LASTFM_SHARED_SECRET_2` | ❌ | — | Optional Last.fm fallback shared secret |
+
+Provider credentials are intentionally environment-only. If an imported copy
+contains old embedded credentials, rotate them at the provider and set the
+replacement values in Replit Secrets.
 
 ---
 
