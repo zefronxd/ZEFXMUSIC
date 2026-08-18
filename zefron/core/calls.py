@@ -181,6 +181,14 @@ class TgCall(PyTgCalls):
         continue normally.
         """
         try:
+            # Probe missing duration after playback starts so ffprobe never
+            # delays the first audio packet.
+            if isinstance(media, Track) and not media.duration_sec:
+                duration_sec = await yt.probe_duration(media.file_path)
+                if duration_sec:
+                    media.duration_sec = duration_sec
+                    media.duration = _duration_text(duration_sec)
+
             _thumb = (
                 await thumb.generate(media)
                 if isinstance(media, Track)
@@ -280,16 +288,6 @@ class TgCall(PyTgCalls):
             self._schedule_next(chat_id)
             return
 
-        # Direct-link metadata can legitimately omit duration when the
-        # metadata service is unavailable.  Probe the downloaded file before
-        # rendering the now-playing card so it never shows 0:00 and the
-        # end-of-track timer has the correct value.
-        if isinstance(media, Track) and not media.duration_sec:
-            duration_sec = await yt.probe_duration(media.file_path)
-            if duration_sec:
-                media.duration_sec = duration_sec
-                media.duration = _duration_text(duration_sec)
-
         is_radio = getattr(media, "duration", "") == "∞"
         is_remote = isinstance(media.file_path, str) and media.file_path.startswith(
             ("http://", "https://")
@@ -372,7 +370,9 @@ class TgCall(PyTgCalls):
                     except (ConnectionError, ConnectionNotFound, TelegramServerError):
                         if attempt == 2:
                             raise
-                        delay = 0.75 * (attempt + 1)
+                        # Keep recovery quick; normal playback never waits
+                        # here, this only applies after a failed VC attempt.
+                        delay = 0.2 * (attempt + 1)
                         logger.warning(
                             "VC connection retry %s/2 in %.2fs for chat %s",
                             attempt + 1,

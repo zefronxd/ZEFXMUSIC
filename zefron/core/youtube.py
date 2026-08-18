@@ -11,6 +11,7 @@ import asyncio
 import aiohttp
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -30,8 +31,9 @@ SHRUTI_API_KEYS = tuple(
     key for key in (config.SHRUTI_API_KEY, config.SHRUTI_API_KEY2) if key
 )
 
-# Audio provider order is intentional: youtubeapi first, ShrutiBot second.
-# The youtubeapi endpoint returns the media bytes directly.
+# Audio provider order is intentional: youtubeapi gets a short head start,
+# then ShrutiBot races it as a fallback.  This keeps the preferred provider
+# while avoiding a multi-second serial wait when it returns a 404.
 YOUTUBE_API_MEDIA_URL = "https://youtubeapi-production-1c84.up.railway.app/api/media"
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
@@ -45,18 +47,27 @@ _conv_locks: dict = {}
 _conv_lock_guard = threading.Lock()
 _download_slots = asyncio.Semaphore(4)
 _download_inflight: dict[str, asyncio.Task] = {}
+_search_inflight: dict[str, asyncio.Task] = {}
+_search_cache: dict[str, tuple[float, Track]] = {}
+_SEARCH_CACHE_TTL = 300
+_SEARCH_CACHE_LIMIT = 256
 _background_tasks: set[asyncio.Task] = set()
 
 
 async def _write_response_to_file(
     response: aiohttp.ClientResponse, path: str
 ) -> int:
-    """Write streamed response chunks without blocking the event loop."""
+    """Write streamed response chunks with minimal per-chunk overhead.
+
+    A buffered local file write is already short and releases no useful
+    concurrency when moved to a worker thread.  The old thread-hop for every
+    128 KiB chunk added measurable overhead to every provider download.
+    """
     total = 0
     with open(path, "wb") as output:
         async for chunk in response.content.iter_chunked(131072):
             total += len(chunk)
-            await asyncio.to_thread(output.write, chunk)
+            output.write(chunk)
     return total
 
 
@@ -90,6 +101,20 @@ async def _deduplicated_download(key: str, operation):
     finally:
         if task.done() and _download_inflight.get(key) is task:
             _download_inflight.pop(key, None)
+
+
+async def _deduplicated_search(key: str, operation):
+    """Share one search request when users ask for the same song together."""
+    task = _search_inflight.get(key)
+    if task is None or task.done():
+        task = asyncio.create_task(operation(), name=f"search:{key[:48]}")
+        _search_inflight[key] = task
+
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if task.done() and _search_inflight.get(key) is task:
+            _search_inflight.pop(key, None)
 
 
 def _get_conv_lock(path: str) -> asyncio.Lock:
@@ -559,6 +584,40 @@ class YouTube:
     # ── Search ─────────────────────────────────────────────────────────────
 
     async def search(self, query: str, m_id: int, video: bool = False) -> Track | None:
+        """Resolve a query with a short-lived in-memory result cache."""
+        started = time.perf_counter()
+        key = f"{query.strip().casefold()}::{int(video)}"
+        cached = _search_cache.get(key)
+        now = time.monotonic()
+        if cached:
+            cached_at, cached_track = cached
+            if now - cached_at < _SEARCH_CACHE_TTL:
+                log_timing(
+                    "youtube.search",
+                    started,
+                    source="memory_cache",
+                    found=True,
+                )
+                return replace(cached_track, message_id=m_id, video=video)
+            _search_cache.pop(key, None)
+
+        track = await _deduplicated_search(
+            key,
+            lambda: self._search_uncached(query, m_id=0, video=video),
+        )
+        if track:
+            # Store a message-independent copy.  Telegram message IDs belong
+            # to the caller and must never leak between concurrent requests.
+            _search_cache[key] = (time.monotonic(), replace(track, message_id=0))
+            if len(_search_cache) > _SEARCH_CACHE_LIMIT:
+                oldest_key = min(_search_cache, key=lambda item: _search_cache[item][0])
+                _search_cache.pop(oldest_key, None)
+            track = replace(track, message_id=m_id, video=video)
+        return track
+
+    async def _search_uncached(
+        self, query: str, m_id: int, video: bool = False
+    ) -> Track | None:
         started = time.perf_counter()
 
         def _finish(track: Track | None, source: str) -> Track | None:
@@ -716,25 +775,67 @@ class YouTube:
     async def _direct_stream_uncached(self, video_id: str) -> str | None:
         """Return a stable local audio source using the requested provider order.
 
-        youtubeapi is always attempted first. ShrutiBot is the only fallback
-        for audio; yt-dlp is intentionally not used in this playback path.
+        youtubeapi gets a brief head start, then ShrutiBot is started
+        speculatively.  yt-dlp is intentionally not used in this playback
+        path.
         """
         if not video_id:
             return None
 
-        result = await _youtubeapi_download_audio(video_id)
-        if result:
-            logger.info("Using youtubeapi audio source: %s", video_id)
-            return result
-
-        logger.warning(
-            "youtubeapi audio unavailable for %s; trying ShrutiBot fallback",
-            video_id,
+        primary = asyncio.create_task(
+            _youtubeapi_download_audio(video_id),
+            name=f"youtubeapi:{video_id}",
         )
-        result = await _shruti_download_audio(video_id)
-        if result:
-            logger.info("Using ShrutiBot audio fallback: %s", video_id)
-        return result
+        fallback = None
+        try:
+            # Preserve youtubeapi preference for warm/healthy responses while
+            # ensuring a slow 404 does not delay the fallback.
+            primary_done, _ = await asyncio.wait({primary}, timeout=0.12)
+            if primary_done:
+                result = primary.result()
+                if result:
+                    logger.info("Using youtubeapi audio source: %s", video_id)
+                    return result
+                logger.warning(
+                    "youtubeapi audio unavailable for %s; starting ShrutiBot",
+                    video_id,
+                )
+            fallback = asyncio.create_task(
+                _shruti_download_audio(video_id),
+                name=f"shruti:{video_id}",
+            )
+
+            done, pending = await asyncio.wait(
+                {primary, fallback},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # Prefer youtubeapi if both providers finish in the same event
+            # loop turn, preserving the configured provider order.
+            completed_tasks = [
+                task for task in (primary, fallback) if task in done
+            ]
+            for completed in completed_tasks:
+                result = completed.result()
+                if result:
+                    source = "youtubeapi" if completed is primary else "ShrutiBot"
+                    logger.info("Using %s audio source: %s", source, video_id)
+                    return result
+
+            # The first completed provider failed; wait for the other one.
+            for completed in pending:
+                result = await completed
+                if result:
+                    source = "youtubeapi" if completed is primary else "ShrutiBot"
+                    logger.info("Using %s audio source: %s", source, video_id)
+                    return result
+            return None
+        finally:
+            for task in (primary, fallback):
+                if task and not task.done():
+                    task.cancel()
+            tasks = [task for task in (primary, fallback) if task]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     async def direct_stream(self, video_id: str) -> str | None:
         """Return one shared, bounded audio download for a video ID."""
@@ -830,3 +931,5 @@ class YouTube:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         _background_tasks.clear()
         _download_inflight.clear()
+        _search_inflight.clear()
+        _search_cache.clear()
