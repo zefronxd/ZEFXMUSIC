@@ -45,12 +45,20 @@ DOWNLOAD_DIR = "downloads"
 _conv_locks: dict = {}
 _conv_lock_guard = threading.Lock()
 _download_slots = asyncio.Semaphore(4)
+_conversion_slots = asyncio.Semaphore(1)
 _download_inflight: dict[str, asyncio.Task] = {}
 _search_inflight: dict[str, asyncio.Task] = {}
 _search_cache: dict[str, tuple[float, Track]] = {}
 _SEARCH_CACHE_TTL = 300
 _SEARCH_CACHE_LIMIT = 256
 _background_tasks: set[asyncio.Task] = set()
+_cache_cleanup_task: asyncio.Task | None = None
+
+# The imported YouTubeAPI endpoint currently returns 404 for audio requests.
+# Keep retrying occasionally so a provider recovery is picked up, but do not
+# spend an HTTP request on every song while it is down.
+_YOUTUBE_API_COOLDOWN_SECONDS = 300
+_youtubeapi_unavailable_until = 0.0
 
 
 async def _write_response_to_file(
@@ -76,10 +84,14 @@ def _track_background(task: asyncio.Task) -> None:
 
 
 def _schedule_cache_cleanup() -> None:
-    _track_background(asyncio.create_task(
+    global _cache_cleanup_task
+    if _cache_cleanup_task and not _cache_cleanup_task.done():
+        return
+    _cache_cleanup_task = asyncio.create_task(
         asyncio.to_thread(_cleanup_wav_cache, 25),
         name="wav-cache-cleanup",
-    ))
+    )
+    _track_background(_cache_cleanup_task)
 
 
 def _schedule_wav_conversion(mp3_path: str) -> None:
@@ -156,34 +168,39 @@ async def _convert_to_wav(mp3_path: str) -> str:
                 os.remove(tmp)
             except Exception:
                 pass
+        # This conversion is only a warm-cache optimization.  Running several
+        # ffmpeg processes with ``-threads 0`` while calls are active can
+        # consume every CPU core and cause audible VC underruns.
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "ffmpeg",
-                "-y",
-                "-threads",
-                "0",
-                "-i",
-                mp3_path,
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-acodec",
-                "pcm_s16le",
-                "-f",
-                "wav",
-                "-map_metadata",
-                "-1",
-                tmp,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-            if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-                os.replace(tmp, wav)
-                return wav
-        except Exception:
-            pass
+            async with _conversion_slots:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "ffmpeg",
+                        "-y",
+                        "-threads",
+                        "1",
+                        "-i",
+                        mp3_path,
+                        "-ar",
+                        "48000",
+                        "-ac",
+                        "2",
+                        "-acodec",
+                        "pcm_s16le",
+                        "-f",
+                        "wav",
+                        "-map_metadata",
+                        "-1",
+                        tmp,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await proc.wait()
+                    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                        os.replace(tmp, wav)
+                        return wav
+                except Exception:
+                    pass
         finally:
             if os.path.exists(tmp):
                 try:
@@ -393,7 +410,10 @@ async def _shruti_download_audio(video_id: str) -> str | None:
 
 async def _youtubeapi_download_audio(video_id: str) -> str | None:
     """Download audio from youtubeapi and return the fastest usable source."""
+    global _youtubeapi_unavailable_until
     if not video_id:
+        return None
+    if time.monotonic() < _youtubeapi_unavailable_until:
         return None
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -430,6 +450,10 @@ async def _youtubeapi_download_audio(video_id: str) -> str | None:
                         video_id,
                         resp.status,
                     )
+                    if resp.status == 404:
+                        _youtubeapi_unavailable_until = (
+                            time.monotonic() + _YOUTUBE_API_COOLDOWN_SECONDS
+                        )
                     return None
 
                 content_type = resp.headers.get("content-type", "").lower()

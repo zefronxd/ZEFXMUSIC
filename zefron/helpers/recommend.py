@@ -679,7 +679,9 @@ _REC_CACHE_TTL_DAYS = 7  # MongoDB documents expire after this many days
 
 
 _REC_CACHE_VERSION = "v2"  # bump when filter logic changes to invalidate stale entries
-_RECOMMEND_SLOTS = asyncio.Semaphore(4)
+# Recommendation generation is optional background work. Keep it small enough
+# that yt-dlp/Last.fm lookups cannot compete with active voice-call playback.
+_RECOMMEND_SLOTS = asyncio.Semaphore(2)
 _RECOMMEND_INFLIGHT: dict[tuple[str, str, str], asyncio.Task] = {}
 
 
