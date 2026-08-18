@@ -71,8 +71,8 @@ class Config:
             or getenv("SHRUTI_API_URL")
             or "https://api01.shrutibots.site"
         )
-        self.SHRUTI_API_KEY = getenv("SHRUTI_API_KEY") or getenv("APIKey")
-        self.SHRUTI_API_KEY2 = getenv("SHRUTI_API_KEY2")
+        self.SHRUTI_API_KEY = "ShrutiBotsYqjNN7t6SuBLh3oi4edd"
+        self.SHRUTI_API_KEY2 = "ShrutiBotsdZvv4iyovLZxFlVzZhv4"
 
         self.LASTFM_API_KEY = "d983c47914d76833e419d2dd8fdcf4ce"
         self.LASTFM_SHARED_SECRET = "b76e8a96fb70385fd2e024a0ac21dbb2"
