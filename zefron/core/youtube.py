@@ -31,9 +31,8 @@ SHRUTI_API_KEYS = tuple(
     key for key in (config.SHRUTI_API_KEY, config.SHRUTI_API_KEY2) if key
 )
 
-# Audio provider order is intentional: youtubeapi gets a short head start,
-# then ShrutiBot races it as a fallback.  This keeps the preferred provider
-# while avoiding a multi-second serial wait when it returns a 404.
+# Both audio providers run concurrently.  YouTubeAPI is only the deterministic
+# tie-breaker when both finish in the same event-loop turn.
 YOUTUBE_API_MEDIA_URL = "https://youtubeapi-production-1c84.up.railway.app/api/media"
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
@@ -80,6 +79,14 @@ def _schedule_cache_cleanup() -> None:
     _track_background(asyncio.create_task(
         asyncio.to_thread(_cleanup_wav_cache, 25),
         name="wav-cache-cleanup",
+    ))
+
+
+def _schedule_wav_conversion(mp3_path: str) -> None:
+    """Warm the normalized cache without blocking the first playback."""
+    _track_background(asyncio.create_task(
+        _convert_to_wav(mp3_path),
+        name=f"wav-convert:{Path(mp3_path).stem}",
     ))
 
 
@@ -243,7 +250,7 @@ def _cleanup_wav_cache(keep: int = 25) -> None:
 
 
 async def _shruti_download_audio(video_id: str) -> str | None:
-    """Download audio as MP3 from ShrutiAPI, pre-convert to WAV."""
+    """Download audio from ShrutiAPI and return the fastest usable source."""
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
     wav_path = _wav_path(mp3_path)
@@ -305,8 +312,10 @@ async def _shruti_download_audio(video_id: str) -> str | None:
         ):
             return None
 
-    # Pre-convert to WAV
-    result = await _convert_to_wav(mp3_path)
+    # Start playback from the compressed local file immediately.  The
+    # normalized 48 kHz WAV remains a warm cache for the next request.
+    result = mp3_path
+    _schedule_wav_conversion(mp3_path)
 
     # Background cache housekeeping
     _schedule_cache_cleanup()
@@ -315,7 +324,7 @@ async def _shruti_download_audio(video_id: str) -> str | None:
 
 
 async def _youtubeapi_download_audio(video_id: str) -> str | None:
-    """Download audio from youtubeapi, then normalize it for voice playback."""
+    """Download audio from youtubeapi and return the fastest usable source."""
     if not video_id:
         return None
 
@@ -374,7 +383,9 @@ async def _youtubeapi_download_audio(video_id: str) -> str | None:
     if not os.path.exists(media_path) or os.path.getsize(media_path) == 0:
         return None
 
-    result = await _convert_to_wav(media_path)
+    # Avoid making a first-time request wait for a full PCM conversion.
+    result = media_path
+    _schedule_wav_conversion(media_path)
     _schedule_cache_cleanup()
     return result
 
@@ -455,6 +466,26 @@ def shruti_video_stream_urls(video_id: str) -> list[str]:
         f"{urlencode({'url': video_id, 'type': 'video', 'api_key': api_key})}"
         for api_key in _shruti_video_keys()
     ]
+
+
+def shruti_audio_stream_urls(video_id: str) -> list[str]:
+    """Build direct ShrutiAPI audio sources for low-latency playback."""
+    from urllib.parse import urlencode
+
+    return [
+        f"{SHRUTI_API_URL}/download?"
+        f"{urlencode({'url': video_id, 'type': 'audio', 'api_key': api_key})}"
+        for api_key in _shruti_video_keys()
+    ]
+
+
+def is_shruti_audio_stream(url: str | None) -> bool:
+    """Return whether a source is one of our direct Shruti audio URLs."""
+    return bool(
+        url
+        and url.startswith(f"{SHRUTI_API_URL}/download")
+        and "type=audio" in url
+    )
 
 
 def _shruti_video_stream_url(video_id: str) -> str:
@@ -773,11 +804,12 @@ class YouTube:
     # ── Download ───────────────────────────────────────────────────────────
 
     async def _direct_stream_uncached(self, video_id: str) -> str | None:
-        """Return a stable local audio source using the requested provider order.
+        """Race both audio providers and return the first usable source.
 
-        youtubeapi gets a brief head start, then ShrutiBot is started
-        speculatively.  yt-dlp is intentionally not used in this playback
-        path.
+        Both providers are started at the same time.  The winner is always a
+        source that has completed successfully, so a provider cannot win just
+        because its URL was cheap to construct while its media is still
+        unavailable.
         """
         if not video_id:
             return None
@@ -786,44 +818,40 @@ class YouTube:
             _youtubeapi_download_audio(video_id),
             name=f"youtubeapi:{video_id}",
         )
-        fallback = None
+        fallback = asyncio.create_task(
+            _shruti_download_audio(video_id),
+            name=f"shruti:{video_id}",
+        )
         try:
-            # Preserve youtubeapi preference for warm/healthy responses while
-            # ensuring a slow 404 does not delay the fallback.
-            primary_done, _ = await asyncio.wait({primary}, timeout=0.12)
-            if primary_done:
-                result = primary.result()
-                if result:
-                    logger.info("Using youtubeapi audio source: %s", video_id)
-                    return result
-                logger.warning(
-                    "youtubeapi audio unavailable for %s; starting ShrutiBot",
-                    video_id,
-                )
-            fallback = asyncio.create_task(
-                _shruti_download_audio(video_id),
-                name=f"shruti:{video_id}",
-            )
-
             done, pending = await asyncio.wait(
                 {primary, fallback},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            # Prefer youtubeapi if both providers finish in the same event
-            # loop turn, preserving the configured provider order.
+            # If both complete in the same loop turn, prefer youtubeapi as a
+            # deterministic tie-breaker. Otherwise completion order decides.
             completed_tasks = [
                 task for task in (primary, fallback) if task in done
             ]
             for completed in completed_tasks:
-                result = completed.result()
+                try:
+                    result = completed.result()
+                except Exception as ex:
+                    provider = "youtubeapi" if completed is primary else "ShrutiBot"
+                    logger.warning("%s audio race failed for %s: %s", provider, video_id, ex)
+                    result = None
                 if result:
                     source = "youtubeapi" if completed is primary else "ShrutiBot"
                     logger.info("Using %s audio source: %s", source, video_id)
                     return result
 
-            # The first completed provider failed; wait for the other one.
+            # The first provider failed; allow the other provider to finish.
             for completed in pending:
-                result = await completed
+                try:
+                    result = await completed
+                except Exception as ex:
+                    provider = "youtubeapi" if completed is primary else "ShrutiBot"
+                    logger.warning("%s audio race failed for %s: %s", provider, video_id, ex)
+                    result = None
                 if result:
                     source = "youtubeapi" if completed is primary else "ShrutiBot"
                     logger.info("Using %s audio source: %s", source, video_id)
@@ -856,9 +884,13 @@ class YouTube:
     async def download(
         self, video_id: str, video: bool = False, direct: bool = True
     ) -> str | None:
-        # ── Audio source: youtubeapi → ShrutiBot fallback ──────────────────
-        # Keep this provider order for every audio call, including callers
-        # that pass direct=False for legacy compatibility.
+        # ── Audio source: concurrent youtubeapi + ShrutiBot race ────────────
+        if not video and not direct:
+            # Used only as recovery when a direct provider URL is rejected.
+            return await _deduplicated_download(
+                f"audio-local:{video_id}",
+                lambda: _shruti_download_audio(video_id),
+            )
         if not video:
             return await self.direct_stream(video_id)
 

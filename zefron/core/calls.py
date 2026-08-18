@@ -441,7 +441,10 @@ class TgCall(PyTgCalls):
                 isinstance(media, Track)
                 and not media.video
                 and isinstance(media.file_path, str)
-                and media.file_path.startswith("https://youtubeapi")
+                and (
+                    media.file_path.startswith("https://youtubeapi")
+                    or yt.is_shruti_audio_stream(media.file_path)
+                )
             ):
                 logger.warning(
                     "Direct stream rejected for %s; trying audio fallback",
