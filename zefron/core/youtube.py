@@ -44,7 +44,7 @@ DOWNLOAD_DIR = "downloads"
 
 _conv_locks: dict = {}
 _conv_lock_guard = threading.Lock()
-_download_slots = asyncio.Semaphore(4)
+_download_slots = asyncio.Semaphore(config.MEDIA_DOWNLOAD_CONCURRENCY)
 _conversion_slots = asyncio.Semaphore(1)
 _download_inflight: dict[str, asyncio.Task] = {}
 _search_inflight: dict[str, asyncio.Task] = {}

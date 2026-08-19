@@ -3,8 +3,8 @@
 # This file is part of ZEFXMusic
 
 
-from random import randint
 from time import time
+import asyncio
 
 from pymongo import AsyncMongoClient
 
@@ -35,6 +35,8 @@ class MongoDB:
         self.spotify_cachedb = self.db.spotify_cache  # Spotify playlist cache
 
         self.assistant = {}
+        self._assistant_load: dict[int, int] = {}
+        self._assistant_lock = asyncio.Lock()
         self.assistantdb = self.db.assistant
 
         self.auth = {}
@@ -174,25 +176,40 @@ class MongoDB:
 
     # ASSISTANT METHODS
     async def set_assistant(self, chat_id: int) -> int:
-        num = randint(1, len(userbot.clients))
+        if not userbot.clients:
+            raise RuntimeError("No assistant clients are connected")
+
+        # Stable least-loaded assignment prevents one assistant from becoming
+        # the bottleneck when many VCs start at the same time.
+        num = min(
+            range(1, len(userbot.clients) + 1),
+            key=lambda item: self._assistant_load.get(item, 0),
+        )
         await self.assistantdb.update_one(
             {"_id": chat_id},
             {"$set": {"num": num}},
             upsert=True,
         )
         self.assistant[chat_id] = num
+        self._assistant_load[num] = self._assistant_load.get(num, 0) + 1
         return num
 
     async def get_assistant(self, chat_id: int):
         from zefron import zefx
 
         if chat_id not in self.assistant:
-            doc = await self.assistantdb.find_one({"_id": chat_id})
-            num = doc["num"] if doc else None
+            async with self._assistant_lock:
+                if chat_id not in self.assistant:
+                    doc = await self.assistantdb.find_one({"_id": chat_id})
+                    num = doc["num"] if doc else None
 
-            if not num or num > len(zefx.clients):
-                num = await self.set_assistant(chat_id)
-            self.assistant[chat_id] = num
+                    if not num or num > len(zefx.clients):
+                        num = await self.set_assistant(chat_id)
+                    else:
+                        self.assistant[chat_id] = num
+                        self._assistant_load[num] = (
+                            self._assistant_load.get(num, 0) + 1
+                        )
 
         return zefx.clients[self.assistant[chat_id] - 1]
 

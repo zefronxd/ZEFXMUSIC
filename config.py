@@ -21,6 +21,12 @@ class Config:
         self.QUEUE_LIMIT = int(getenv("QUEUE_LIMIT", 20))
         self.PLAYLIST_LIMIT = int(getenv("PLAYLIST_LIMIT", 20))
         self.SPOTIFY_QUEUE_LIMIT = 100
+        self.PYROGRAM_MAX_CONCURRENT_TRANSMISSIONS = int(
+            getenv("PYROGRAM_MAX_CONCURRENT_TRANSMISSIONS", 32)
+        )
+        self.MEDIA_DOWNLOAD_CONCURRENCY = int(
+            getenv("MEDIA_DOWNLOAD_CONCURRENCY", 12)
+        )
 
         self.SESSION1 = getenv("SESSION") or getenv("STRING1") or None
         self.SESSION2 = getenv("SESSION2", None)

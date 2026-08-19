@@ -801,7 +801,9 @@ class TgCall(PyTgCalls):
     async def boot(self) -> None:
         PyTgCallsSession.notice_displayed = True
         for ub in userbot.clients:
-            client = PyTgCalls(ub, cache_duration=100)
+            # Keep group-call state cached longer so dozens of active chats do
+            # not trigger repeated Telegram state lookups.
+            client = PyTgCalls(ub, cache_duration=600)
             await client.start()
             self.clients.append(client)
             await self.decorators(client)
