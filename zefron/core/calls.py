@@ -48,6 +48,7 @@ class TgCall(PyTgCalls):
         self._play_locks: dict[int, asyncio.Lock] = {}
         self._card_tasks: dict[int, asyncio.Task] = {}
         self._stream_recovery: set[int] = set()
+        self._play_slots: dict[int, asyncio.Semaphore] = {}
 
     def _schedule_next(self, chat_id: int) -> None:
         """Schedule one reliable queue transition after the current one ends."""
@@ -325,6 +326,11 @@ class TgCall(PyTgCalls):
                 _ffmpeg = f"-ss {seek_time} {_ffmpeg}"
         elif seek_time > 1:
             _ffmpeg = f"-ss {seek_time}"
+        elif not is_video:
+            # Bound one decoder to one worker thread. With dozens of active
+            # voice chats, letting every MP3 decoder auto-spawn threads causes
+            # CPU oversubscription and audible underruns.
+            _ffmpeg = "-threads 1 -vn -sn -dn -fflags +discardcorrupt+genpts"
         else:
             _ffmpeg = None
 
@@ -387,13 +393,19 @@ class TgCall(PyTgCalls):
                     return
                 for attempt in range(3):
                     try:
-                        await client.play(
-                            chat_id=chat_id,
-                            stream=stream,
-                            # Join an existing call. The assistant is not
-                            # required to be an administrator.
-                            config=types.GroupCallConfig(auto_start=False),
+                        slot = self._play_slots.setdefault(
+                            id(client), asyncio.Semaphore(12)
                         )
+                        # Smooth reconnect/start bursts per assistant instead
+                        # of sending 50 Telegram VC mutations at once.
+                        async with slot:
+                            await client.play(
+                                chat_id=chat_id,
+                                stream=stream,
+                                # Join an existing call. The assistant is not
+                                # required to be an administrator.
+                                config=types.GroupCallConfig(auto_start=False),
+                            )
                         log_timing(
                             "playback.start",
                             started,
@@ -803,8 +815,9 @@ class TgCall(PyTgCalls):
         for ub in userbot.clients:
             # Keep group-call state cached longer so dozens of active chats do
             # not trigger repeated Telegram state lookups.
-            client = PyTgCalls(ub, cache_duration=600)
+            client = PyTgCalls(ub, cache_duration=900)
             await client.start()
             self.clients.append(client)
+            self._play_slots[id(client)] = asyncio.Semaphore(12)
             await self.decorators(client)
         logger.info("PyTgCalls client(s) started.")
