@@ -299,6 +299,7 @@ class TgCall(PyTgCalls):
             return
 
         is_radio = getattr(media, "duration", "") == "∞"
+        is_video = bool(media.video)
         is_remote = isinstance(media.file_path, str) and media.file_path.startswith(
             ("http://", "https://")
         )
@@ -334,7 +335,6 @@ class TgCall(PyTgCalls):
         else:
             _ffmpeg = None
 
-        is_video = bool(media.video)
         if not is_remote and not await yt.has_media_stream(
             media.file_path, video=is_video
         ):
