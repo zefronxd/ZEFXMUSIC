@@ -10,6 +10,7 @@ import psutil
 from pyrogram import filters, types
 
 from zefron import app, zefx, boot, config, lang
+from zefron.core.metrics import traffic_snapshot
 from zefron.helpers import buttons
 
 # ── Cached photo file_id (skip URL upload after first /ping) ──────────────
@@ -74,7 +75,16 @@ async def _ping(_, m: types.Message):
     get_time = lambda s: (lambda r: (f"{r[-1]}, " if r[-1][:-4] != "0" else "") + ":".join(reversed(r[:-1])))([f"{v}{u}" for v, u in zip([s % 60, (s // 60) % 60, (s // 3600) % 24, s // 86400], ["s", "m", "h", "days"])])
     uptime   = get_time(int(time.time() - boot))
 
-    caption  = m.lang["ping_pong"].format(latency, uptime, cpu, f"{ram_mb} MB", disk, vc_ping)
+    traffic = traffic_snapshot()
+    caption  = m.lang["ping_pong"].format(
+        latency, uptime, cpu, f"{ram_mb} MB", disk, vc_ping
+    )
+    caption += (
+        "\n\n<b>Telegram traffic (last 60s):</b>"
+        f"\n⬇️ Incoming: <code>{traffic['incoming_per_minute']}/min</code>"
+        f"\n⬆️ Outgoing: <code>{traffic['outgoing_per_minute']}/min</code>"
+        f"\n⚡ API average: <code>{traffic['api_avg_ms']} ms</code>"
+    )
     markup   = buttons.ping_markup(m.lang["support"])
 
     await sent.edit_caption(caption=caption, reply_markup=markup)

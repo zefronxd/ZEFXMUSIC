@@ -9,6 +9,7 @@ import asyncio
 import pyrogram
 from zefron import config, logger
 from zefron.core.database import init_db_pool
+from zefron.core.metrics import record_incoming, record_outgoing, traffic_snapshot
 
 DOWNLOAD_RETENTION_SECONDS = 60 * 60
 DOWNLOAD_CLEANUP_INTERVAL = 15 * 60
@@ -76,6 +77,20 @@ async def auto_clean_downloads():
 
         await asyncio.sleep(DOWNLOAD_CLEANUP_INTERVAL)
 
+
+async def _traffic_reporter():
+    """Log a cheap rolling Telegram traffic summary once per minute."""
+    while True:
+        await asyncio.sleep(60)
+        stats = traffic_snapshot()
+        logger.info(
+            "telegram traffic last_60s incoming=%s outgoing=%s avg_api_ms=%.1f",
+            stats["incoming_per_minute"],
+            stats["outgoing_per_minute"],
+            stats["api_avg_ms"],
+        )
+
+
 class Bot(pyrogram.Client):
     def __init__(self):
         super().__init__(
@@ -92,6 +107,23 @@ class Bot(pyrogram.Client):
         self.bl_users = pyrogram.filters.user()
         self.sudoers = pyrogram.filters.user(self.owner)
         self._cleanup_task: asyncio.Task | None = None
+        self._traffic_task: asyncio.Task | None = None
+
+    async def handle_updates(self, updates):
+        """Count raw incoming Telegram updates without touching handlers."""
+        if hasattr(updates, "updates"):
+            record_incoming(len(updates.updates))
+        else:
+            record_incoming()
+        return await super().handle_updates(updates)
+
+    async def invoke(self, query, *args, **kwargs):
+        """Measure every outgoing Telegram API request at the client boundary."""
+        started = time.monotonic()
+        try:
+            return await super().invoke(query, *args, **kwargs)
+        finally:
+            record_outgoing(started)
 
     async def boot(self):
         """
@@ -103,6 +135,9 @@ class Bot(pyrogram.Client):
 
         self._cleanup_task = asyncio.create_task(
             auto_clean_downloads(), name="download-cleanup"
+        )
+        self._traffic_task = asyncio.create_task(
+            _traffic_reporter(), name="telegram-traffic-reporter"
         )
         await init_db_pool()
         await super().start()
@@ -132,5 +167,12 @@ class Bot(pyrogram.Client):
             except asyncio.CancelledError:
                 pass
         self._cleanup_task = None
+        if self._traffic_task and not self._traffic_task.done():
+            self._traffic_task.cancel()
+            try:
+                await self._traffic_task
+            except asyncio.CancelledError:
+                pass
+        self._traffic_task = None
         await super().stop()
         logger.info("Bot stopped.")
