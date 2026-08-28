@@ -34,7 +34,7 @@ SHRUTI_API_KEYS = tuple(
 
 # Both audio providers run concurrently.  YouTubeAPI is only the deterministic
 # tie-breaker when both finish in the same event-loop turn.
-YOUTUBE_API_MEDIA_URL = "https://youtubeapi-production-1c84.up.railway.app/api/media"
+YOUTUBE_API_MEDIA_URL = "https://zefronapi-62506ec361ff.herokuapp.com/api/media"
 
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"
@@ -53,15 +53,10 @@ def _normalize_api_url(value: str | None) -> str:
 # Credentials remain environment-only; the no-key Fast Media endpoint is
 # attempted first, just like the imported downloader.
 SPARROW_API_URL = _normalize_api_url(
-    os.environ.get("SPARROW_API_URL")
-    or os.environ.get("MusicSp_API_URL")
+    os.environ.get("SPARROW_API_URL") or os.environ.get("MusicSp_API_URL")
 )
 SPARROW_API_URLS = tuple(
-    dict.fromkeys(
-        url
-        for url in (SPARROW_API_URL, "https://apisparrow.site")
-        if url
-    )
+    dict.fromkeys(url for url in (SPARROW_API_URL, "https://apisparrow.site") if url)
 )
 IMPORTED_API_URL = _normalize_api_url(
     SPARROW_API_URL
@@ -112,9 +107,7 @@ _YOUTUBE_API_COOLDOWN_SECONDS = 300
 _youtubeapi_unavailable_until = 0.0
 
 
-async def _write_response_to_file(
-    response: aiohttp.ClientResponse, path: str
-) -> int:
+async def _write_response_to_file(response: aiohttp.ClientResponse, path: str) -> int:
     """Write streamed response chunks with minimal per-chunk overhead.
 
     A buffered local file write is already short and releases no useful
@@ -147,16 +140,19 @@ def _schedule_cache_cleanup() -> None:
 
 def _schedule_wav_conversion(mp3_path: str) -> None:
     """Warm the normalized cache without blocking the first playback."""
-    _track_background(asyncio.create_task(
-        _convert_to_wav(mp3_path),
-        name=f"wav-convert:{Path(mp3_path).stem}",
-    ))
+    _track_background(
+        asyncio.create_task(
+            _convert_to_wav(mp3_path),
+            name=f"wav-convert:{Path(mp3_path).stem}",
+        )
+    )
 
 
 async def _deduplicated_download(key: str, operation):
     """Share one bounded download task among all callers for the same media."""
     task = _download_inflight.get(key)
     if task is None or task.done():
+
         async def _run():
             async with _download_slots:
                 return await operation()
@@ -265,8 +261,7 @@ async def _convert_to_wav(mp3_path: str) -> str:
 async def _probe_duration(file_path: str) -> int:
     """Read the actual duration of a downloaded media file in seconds."""
     if not file_path or (
-        isinstance(file_path, str)
-        and file_path.startswith(("http://", "https://"))
+        isinstance(file_path, str) and file_path.startswith(("http://", "https://"))
     ):
         return 0
 
@@ -294,8 +289,7 @@ async def _probe_duration(file_path: str) -> int:
 async def _has_media_stream(file_path: str, video: bool = False) -> bool:
     """Check that a local file contains the stream PyTgCalls will consume."""
     if not file_path or (
-        isinstance(file_path, str)
-        and file_path.startswith(("http://", "https://"))
+        isinstance(file_path, str) and file_path.startswith(("http://", "https://"))
     ):
         return bool(file_path)
     if not os.path.isfile(file_path) or os.path.getsize(file_path) <= 0:
@@ -327,8 +321,7 @@ async def _has_media_stream(file_path: str, video: bool = False) -> bool:
 def _remove_invalid_media(file_path: str | None) -> None:
     """Remove a bad provider cache entry and its normalized companion."""
     if not file_path or (
-        isinstance(file_path, str)
-        and file_path.startswith(("http://", "https://"))
+        isinstance(file_path, str) and file_path.startswith(("http://", "https://"))
     ):
         return
     candidates = {
@@ -428,11 +421,7 @@ async def _download_from_imported_api(
     temp_path = f"{file_path}.part"
     try:
         session = await get_http_session()
-        endpoint = (
-            api_url
-            if api_url.endswith("/download")
-            else f"{api_url}/download"
-        )
+        endpoint = api_url if api_url.endswith("/download") else f"{api_url}/download"
         params = {"url": video_id, "type": media_type}
         if IMPORTED_API_KEY:
             params["api_key"] = IMPORTED_API_KEY
@@ -792,9 +781,7 @@ def shruti_audio_stream_urls(video_id: str) -> list[str]:
 def is_shruti_audio_stream(url: str | None) -> bool:
     """Return whether a source is one of our direct Shruti audio URLs."""
     return bool(
-        url
-        and url.startswith(f"{SHRUTI_API_URL}/download")
-        and "type=audio" in url
+        url and url.startswith(f"{SHRUTI_API_URL}/download") and "type=audio" in url
     )
 
 
@@ -850,7 +837,12 @@ class YouTube:
         host = (parsed.hostname or "").lower().rstrip(".")
         if host in {"youtu.be", "www.youtu.be"}:
             candidate = parsed.path.strip("/").split("/", 1)[0]
-        elif host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}:
+        elif host in {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+        }:
             if parsed.path == "/watch":
                 candidate = parse_qs(parsed.query).get("v", [""])[0]
             elif parsed.path.startswith(("/shorts/", "/embed/", "/live/")):
@@ -968,9 +960,7 @@ class YouTube:
         # A direct URL is not a search query.  In particular, a URL whose ID
         # starts with ``-`` or ``_`` must resolve to that exact video.
         if self.video_id(query):
-            return _finish(
-                await self.get_track(query, m_id, video=video), "direct_url"
-            )
+            return _finish(await self.get_track(query, m_id, video=video), "direct_url")
 
         # OneGrab search
         if config.ONEGRAB_API_KEY:
@@ -980,18 +970,21 @@ class YouTube:
                 yt_url = r.get("url", "")
                 vid_id = r.get("id", "")
                 dur_sec = int(r.get("duration") or 0)
-                return _finish(Track(
-                    id=vid_id,
-                    channel_name=r.get("channel"),
-                    duration=_secs_to_str(dur_sec),
-                    duration_sec=dur_sec,
-                    message_id=m_id,
-                    title=(r.get("title") or "")[:25],
-                    thumbnail=(r.get("thumbnail") or "").split("?")[0],
-                    url=yt_url,
-                    view_count=r.get("views"),
-                    video=video,
-                ), "onegrab")
+                return _finish(
+                    Track(
+                        id=vid_id,
+                        channel_name=r.get("channel"),
+                        duration=_secs_to_str(dur_sec),
+                        duration_sec=dur_sec,
+                        message_id=m_id,
+                        title=(r.get("title") or "")[:25],
+                        thumbnail=(r.get("thumbnail") or "").split("?")[0],
+                        url=yt_url,
+                        view_count=r.get("views"),
+                        video=video,
+                    ),
+                    "onegrab",
+                )
 
         # Fallback: py_yt
         try:
@@ -1001,18 +994,23 @@ class YouTube:
             return _finish(None, "py_yt_error")
         if results and results["result"]:
             data = results["result"][0]
-            return _finish(Track(
-                id=data.get("id"),
-                channel_name=data.get("channel", {}).get("name"),
-                duration=data.get("duration"),
-                duration_sec=utils.to_seconds(data.get("duration")),
-                message_id=m_id,
-                title=data.get("title", "")[:25],
-                thumbnail=data.get("thumbnails", [{}])[-1].get("url", "").split("?")[0],
-                url=data.get("link"),
-                view_count=data.get("viewCount", {}).get("short"),
-                video=video,
-            ), "py_yt")
+            return _finish(
+                Track(
+                    id=data.get("id"),
+                    channel_name=data.get("channel", {}).get("name"),
+                    duration=data.get("duration"),
+                    duration_sec=utils.to_seconds(data.get("duration")),
+                    message_id=m_id,
+                    title=data.get("title", "")[:25],
+                    thumbnail=data.get("thumbnails", [{}])[-1]
+                    .get("url", "")
+                    .split("?")[0],
+                    url=data.get("link"),
+                    view_count=data.get("viewCount", {}).get("short"),
+                    video=video,
+                ),
+                "py_yt",
+            )
         return _finish(None, "not_found")
 
     # ── Track metadata from URL ────────────────────────────────────────────
@@ -1127,9 +1125,7 @@ class YouTube:
         # Match the imported downloader's provider order before the existing
         # low-latency provider race.  This endpoint can return a complete MP3
         # without requiring cookies.
-        imported_path = await _download_from_imported_apis(
-            video_id, "audio", "mp3"
-        )
+        imported_path = await _download_from_imported_apis(video_id, "audio", "mp3")
         if imported_path:
             _schedule_wav_conversion(imported_path)
             _schedule_cache_cleanup()
@@ -1151,15 +1147,15 @@ class YouTube:
             )
             # If both complete in the same loop turn, prefer youtubeapi as a
             # deterministic tie-breaker. Otherwise completion order decides.
-            completed_tasks = [
-                task for task in (primary, fallback) if task in done
-            ]
+            completed_tasks = [task for task in (primary, fallback) if task in done]
             for completed in completed_tasks:
                 try:
                     result = completed.result()
                 except Exception as ex:
                     provider = "youtubeapi" if completed is primary else "ShrutiBot"
-                    logger.warning("%s audio race failed for %s: %s", provider, video_id, ex)
+                    logger.warning(
+                        "%s audio race failed for %s: %s", provider, video_id, ex
+                    )
                     result = None
                 if result:
                     source = "youtubeapi" if completed is primary else "ShrutiBot"
@@ -1172,7 +1168,9 @@ class YouTube:
                     result = await completed
                 except Exception as ex:
                     provider = "youtubeapi" if completed is primary else "ShrutiBot"
-                    logger.warning("%s audio race failed for %s: %s", provider, video_id, ex)
+                    logger.warning(
+                        "%s audio race failed for %s: %s", provider, video_id, ex
+                    )
                     result = None
                 if result:
                     source = "youtubeapi" if completed is primary else "ShrutiBot"
@@ -1346,7 +1344,8 @@ class YouTube:
     async def close(self) -> None:
         """Cancel media housekeeping/download tasks during shutdown."""
         tasks_to_cancel = [
-            task for task in (*_background_tasks, *_download_inflight.values())
+            task
+            for task in (*_background_tasks, *_download_inflight.values())
             if not task.done()
         ]
         for task in tasks_to_cancel:
