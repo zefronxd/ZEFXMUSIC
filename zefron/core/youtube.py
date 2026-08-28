@@ -39,20 +39,35 @@ YOUTUBE_API_MEDIA_URL = "https://youtubeapi-production-1c84.up.railway.app/api/m
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"
 
+
+def _normalize_api_url(value: str | None) -> str:
+    """Normalize provider URLs entered with or without an HTTP scheme."""
+    value = str(value or "").strip().strip("\"'")
+    if value and not value.startswith(("http://", "https://")):
+        value = f"https://{value}"
+    return value.rstrip("/")
+
+
 # ── Imported media download APIs ───────────────────────────────────────────
 # Keep compatibility with the provider names used by the imported module.
 # Credentials remain environment-only; the no-key Fast Media endpoint is
 # attempted first, just like the imported downloader.
-IMPORTED_API_URL = (
+SPARROW_API_URL = _normalize_api_url(
+    os.environ.get("SPARROW_API_URL")
+    or os.environ.get("MusicSp_API_URL")
+)
+IMPORTED_API_URL = _normalize_api_url(
+    SPARROW_API_URL
+    or (
     os.environ.get("MusicSp_API_URL")
-    or os.environ.get("SPARROW_API_URL")
     or os.environ.get("ApiUrl")
     or os.environ.get("SHRUTI_API_URL")
     or "https://apisparrow.site"
-).rstrip("/")
+    )
+)
 IMPORTED_API_KEY = (
-    os.environ.get("MusicSp_API_KEY")
-    or os.environ.get("SPARROW_API_KEY")
+    os.environ.get("SPARROW_API_KEY")
+    or os.environ.get("MusicSp_API_KEY")
     or os.environ.get("APIKey")
     or ""
 ).strip()
