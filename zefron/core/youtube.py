@@ -38,6 +38,34 @@ YOUTUBE_API_MEDIA_URL = "https://youtubeapi-production-1c84.up.railway.app/api/m
 # ── OneGrab API (search / metadata) ───────────────────────────────────────
 ONEGRAB_BASE = "https://api.onegrab.fun"
 
+# ── Imported media download APIs ───────────────────────────────────────────
+# Keep compatibility with the provider names used by the imported module.
+# Credentials remain environment-only; the no-key Fast Media endpoint is
+# attempted first, just like the imported downloader.
+IMPORTED_API_URL = (
+    os.environ.get("MusicSp_API_URL")
+    or os.environ.get("SPARROW_API_URL")
+    or os.environ.get("ApiUrl")
+    or os.environ.get("SHRUTI_API_URL")
+    or "https://apisparrow.site"
+).rstrip("/")
+IMPORTED_API_KEY = (
+    os.environ.get("MusicSp_API_KEY")
+    or os.environ.get("SPARROW_API_KEY")
+    or os.environ.get("APIKey")
+    or ""
+).strip()
+FAST_MEDIA_API_URL = os.environ.get(
+    "FAST_MEDIA_API_URL",
+    "https://zefronapi-62506ec361ff.herokuapp.com/api/media",
+).strip()
+MEDIA_DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(
+    total=180,
+    connect=30,
+    sock_connect=30,
+    sock_read=60,
+)
+
 DOWNLOAD_DIR = "downloads"
 
 # ── WAV conversion helpers ─────────────────────────────────────────────────
@@ -293,6 +321,162 @@ def _remove_invalid_media(file_path: str | None) -> None:
                 os.remove(candidate)
         except OSError:
             pass
+
+
+async def _download_from_fast_api(
+    video_id: str, media_type: str, file_path: str
+) -> bool:
+    """Download media through the imported no-cookie provider."""
+    temp_path = f"{file_path}.fast.part"
+    try:
+        session = await get_http_session()
+        async with session.get(
+            FAST_MEDIA_API_URL,
+            params={
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "type": media_type,
+                "quality": "360",
+            },
+            timeout=MEDIA_DOWNLOAD_TIMEOUT,
+        ) as response:
+            if response.status != 200:
+                logger.warning(
+                    "Fast media API returned HTTP %s for %s",
+                    response.status,
+                    video_id,
+                )
+                return False
+
+            content_type = response.headers.get("content-type", "").lower()
+            if "json" in content_type:
+                payload = await response.json(content_type=None)
+                media_url = (
+                    payload.get("url")
+                    or payload.get("download_url")
+                    or payload.get("link")
+                )
+                if not media_url:
+                    return False
+                async with session.get(
+                    media_url,
+                    timeout=MEDIA_DOWNLOAD_TIMEOUT,
+                ) as media_response:
+                    if media_response.status != 200:
+                        return False
+                    await _write_response_to_file(media_response, temp_path)
+            elif content_type.startswith("text/"):
+                logger.warning(
+                    "Fast media API returned text for %s instead of media",
+                    video_id,
+                )
+                return False
+            else:
+                await _write_response_to_file(response, temp_path)
+
+        if os.path.isfile(temp_path) and os.path.getsize(temp_path) > 0:
+            os.replace(temp_path, file_path)
+            return True
+    except Exception as exc:
+        logger.warning(
+            "Fast media API failed for %s: %s",
+            video_id,
+            type(exc).__name__,
+        )
+    finally:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+    return False
+
+
+async def _download_from_imported_api(
+    video_id: str, media_type: str, file_path: str
+) -> bool:
+    """Download media from the configured imported-project API."""
+    if not IMPORTED_API_KEY:
+        return False
+
+    temp_path = f"{file_path}.part"
+    try:
+        session = await get_http_session()
+        endpoint = (
+            IMPORTED_API_URL
+            if IMPORTED_API_URL.endswith("/download")
+            else f"{IMPORTED_API_URL}/download"
+        )
+        async with session.get(
+            endpoint,
+            params={
+                "url": video_id,
+                "type": media_type,
+                "api_key": IMPORTED_API_KEY,
+            },
+            timeout=MEDIA_DOWNLOAD_TIMEOUT,
+        ) as response:
+            if response.status != 200:
+                logger.warning(
+                    "Configured media API returned HTTP %s for %s",
+                    response.status,
+                    video_id,
+                )
+                return False
+
+            content_type = response.headers.get("content-type", "").lower()
+            if "json" in content_type or content_type.startswith("text/"):
+                logger.warning(
+                    "Configured media API returned non-media content for %s",
+                    video_id,
+                )
+                return False
+            await _write_response_to_file(response, temp_path)
+
+        if os.path.isfile(temp_path) and os.path.getsize(temp_path) > 0:
+            os.replace(temp_path, file_path)
+            return True
+    except Exception as exc:
+        logger.warning(
+            "Configured media API failed for %s: %s",
+            video_id,
+            type(exc).__name__,
+        )
+    finally:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+    return False
+
+
+async def _download_from_imported_apis(
+    video_id: str, media_type: str, extension: str
+) -> str | None:
+    """Run the imported downloader's Fast API and keyed API sequence."""
+    if not video_id:
+        return None
+
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{extension}")
+    is_video = media_type == "video"
+
+    if os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+        if await _has_media_stream(file_path, video=is_video):
+            return file_path
+        _remove_invalid_media(file_path)
+
+    if await _download_from_fast_api(video_id, media_type, file_path):
+        if await _has_media_stream(file_path, video=is_video):
+            return file_path
+        _remove_invalid_media(file_path)
+
+    if await _download_from_imported_api(video_id, media_type, file_path):
+        if await _has_media_stream(file_path, video=is_video):
+            return file_path
+        _remove_invalid_media(file_path)
+
+    return None
 
 
 def _cleanup_wav_cache(keep: int = 25) -> None:
@@ -916,6 +1100,18 @@ class YouTube:
         if not video_id:
             return None
 
+        # Match the imported downloader's provider order before the existing
+        # low-latency provider race.  This endpoint can return a complete MP3
+        # without requiring cookies.
+        imported_path = await _download_from_imported_apis(
+            video_id, "audio", "mp3"
+        )
+        if imported_path:
+            _schedule_wav_conversion(imported_path)
+            _schedule_cache_cleanup()
+            logger.info("Using imported media API audio source: %s", video_id)
+            return imported_path
+
         primary = asyncio.create_task(
             _youtubeapi_download_audio(video_id),
             name=f"youtubeapi:{video_id}",
@@ -1004,16 +1200,16 @@ class YouTube:
         if not video:
             return await self.direct_stream(video_id)
 
-        # ── Video: local ShrutiAPI MKV ─────────────────────────────────────
+        # ── Video: imported API first, then local ShrutiAPI MKV ─────────────
         if video:
             started = time.perf_counter()
             result = await _deduplicated_download(
                 f"video:{video_id}",
-                lambda: _shruti_download_video(video_id),
+                lambda: self._download_video_uncached(video_id),
             )
             log_timing("media.download", started, media_id=video_id, video=True)
             if result:
-                logger.info("ShrutiAPI video ready locally: %s", video_id)
+                logger.info("Video ready locally: %s", video_id)
             return result
 
         # ── yt-dlp fallback (audio only) ────────────────────────────────────
@@ -1060,6 +1256,16 @@ class YouTube:
             return filename
 
         return await asyncio.to_thread(_dl)
+
+    async def _download_video_uncached(self, video_id: str) -> str | None:
+        """Use the imported API sequence before the existing video provider."""
+        imported_path = await _download_from_imported_apis(
+            video_id, "video", "mp4"
+        )
+        if imported_path:
+            logger.info("Using imported media API video source: %s", video_id)
+            return imported_path
+        return await _shruti_download_video(video_id)
 
     async def close(self) -> None:
         """Cancel media housekeeping/download tasks during shutdown."""
