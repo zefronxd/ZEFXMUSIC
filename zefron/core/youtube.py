@@ -56,6 +56,13 @@ SPARROW_API_URL = _normalize_api_url(
     os.environ.get("SPARROW_API_URL")
     or os.environ.get("MusicSp_API_URL")
 )
+SPARROW_API_URLS = tuple(
+    dict.fromkeys(
+        url
+        for url in (SPARROW_API_URL, "https://apisparrow.site")
+        if url
+    )
+)
 IMPORTED_API_URL = _normalize_api_url(
     SPARROW_API_URL
     or (
@@ -408,19 +415,23 @@ async def _download_from_fast_api(
 
 
 async def _download_from_imported_api(
-    video_id: str, media_type: str, file_path: str
+    video_id: str,
+    media_type: str,
+    file_path: str,
+    api_url: str | None = None,
 ) -> bool:
     """Download media from the configured imported-project API."""
-    if not IMPORTED_API_URL:
+    api_url = _normalize_api_url(api_url or IMPORTED_API_URL)
+    if not api_url:
         return False
 
     temp_path = f"{file_path}.part"
     try:
         session = await get_http_session()
         endpoint = (
-            IMPORTED_API_URL
-            if IMPORTED_API_URL.endswith("/download")
-            else f"{IMPORTED_API_URL}/download"
+            api_url
+            if api_url.endswith("/download")
+            else f"{api_url}/download"
         )
         params = {"url": video_id, "type": media_type}
         if IMPORTED_API_KEY:
@@ -1250,10 +1261,13 @@ class YouTube:
                 return file_path
             _remove_invalid_media(file_path)
 
-        if await _download_from_imported_api(video_id, "video", file_path):
-            if await _has_media_stream(file_path, video=True):
-                return file_path
-            _remove_invalid_media(file_path)
+        for api_url in SPARROW_API_URLS:
+            if await _download_from_imported_api(
+                video_id, "video", file_path, api_url=api_url
+            ):
+                if await _has_media_stream(file_path, video=True):
+                    return file_path
+                _remove_invalid_media(file_path)
         return None
 
     async def _download_with_ytdlp(
