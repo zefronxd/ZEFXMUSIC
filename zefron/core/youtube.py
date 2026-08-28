@@ -59,10 +59,10 @@ SPARROW_API_URL = _normalize_api_url(
 IMPORTED_API_URL = _normalize_api_url(
     SPARROW_API_URL
     or (
-    os.environ.get("MusicSp_API_URL")
-    or os.environ.get("ApiUrl")
-    or os.environ.get("SHRUTI_API_URL")
-    or "https://apisparrow.site"
+        os.environ.get("MusicSp_API_URL")
+        or os.environ.get("ApiUrl")
+        or os.environ.get("SHRUTI_API_URL")
+        or "https://apisparrow.site"
     )
 )
 IMPORTED_API_KEY = (
@@ -1226,19 +1226,35 @@ class YouTube:
             return result
 
     async def _download_video_uncached(self, video_id: str) -> str | None:
-        """Use imported APIs, ShrutiAPI, then yt-dlp for video playback."""
-        imported_path = await _download_from_imported_apis(
-            video_id, "video", "mp4"
-        )
-        if imported_path:
-            logger.info("Using imported media API video source: %s", video_id)
-            return imported_path
+        """Use Sparrow URL/API, then local providers for video playback."""
+        sparrow_path = await self._download_from_sparrow(video_id)
+        if sparrow_path:
+            logger.info("Using Sparrow API video source: %s", video_id)
+            return sparrow_path
 
         shruti_path = await _shruti_download_video(video_id)
         if shruti_path:
             return shruti_path
 
         return await self._download_with_ytdlp(video_id, video=True)
+
+    async def _download_from_sparrow(self, video_id: str) -> str | None:
+        """Download and validate a vplay file from Sparrow's configured URL."""
+        if not video_id or not SPARROW_API_URL:
+            return None
+
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
+        if os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+            if await _has_media_stream(file_path, video=True):
+                return file_path
+            _remove_invalid_media(file_path)
+
+        if await _download_from_imported_api(video_id, "video", file_path):
+            if await _has_media_stream(file_path, video=True):
+                return file_path
+            _remove_invalid_media(file_path)
+        return None
 
     async def _download_with_ytdlp(
         self, video_id: str, video: bool = False
