@@ -5,6 +5,7 @@
 
 import os
 import re
+import glob
 import yt_dlp
 import random
 import asyncio
@@ -395,7 +396,7 @@ async def _download_from_imported_api(
     video_id: str, media_type: str, file_path: str
 ) -> bool:
     """Download media from the configured imported-project API."""
-    if not IMPORTED_API_KEY:
+    if not IMPORTED_API_URL:
         return False
 
     temp_path = f"{file_path}.part"
@@ -406,14 +407,11 @@ async def _download_from_imported_api(
             if IMPORTED_API_URL.endswith("/download")
             else f"{IMPORTED_API_URL}/download"
         )
+        params = {"url": video_id, "type": media_type}
+        if IMPORTED_API_KEY:
+            params["api_key"] = IMPORTED_API_KEY
         async with session.get(
-            endpoint,
-            params={
-                "url": video_id,
-                "type": media_type,
-                "api_key": IMPORTED_API_KEY,
-            },
-            timeout=MEDIA_DOWNLOAD_TIMEOUT,
+            endpoint, params=params, timeout=MEDIA_DOWNLOAD_TIMEOUT
         ) as response:
             if response.status != 200:
                 logger.warning(
@@ -1212,60 +1210,93 @@ class YouTube:
                 logger.info("Video ready locally: %s", video_id)
             return result
 
-        # ── yt-dlp fallback (audio only) ────────────────────────────────────
-        yt_url = self.base + video_id
-        ext = "mp4" if video else "webm"
-        filename = f"downloads/{video_id}.{ext}"
-
-        if Path(filename).exists():
-            return filename
-
-        cookie = self.get_cookies()
-        base_opts = {
-            "outtmpl": "downloads/%(id)s.%(ext)s",
-            "quiet": True,
-            "noplaylist": True,
-            "geo_bypass": True,
-            "no_warnings": True,
-            "overwrites": False,
-            "nocheckcertificate": True,
-            "cookiefile": cookie,
-        }
-
-        if video:
-            ydl_opts = {
-                **base_opts,
-                "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio)",
-                "merge_output_format": "mp4",
-            }
-        else:
-            ydl_opts = {
-                **base_opts,
-                "format": "bestaudio[ext=webm][acodec=opus]",
-            }
-
-        def _dl():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    ydl.download([yt_url])
-                except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError):
-                    return None
-                except Exception as ex:
-                    logger.warning("yt-dlp failed: %s", ex)
-                    return None
-            return filename
-
-        return await asyncio.to_thread(_dl)
-
     async def _download_video_uncached(self, video_id: str) -> str | None:
-        """Use the imported API sequence before the existing video provider."""
+        """Use imported APIs, ShrutiAPI, then yt-dlp for video playback."""
         imported_path = await _download_from_imported_apis(
             video_id, "video", "mp4"
         )
         if imported_path:
             logger.info("Using imported media API video source: %s", video_id)
             return imported_path
-        return await _shruti_download_video(video_id)
+
+        shruti_path = await _shruti_download_video(video_id)
+        if shruti_path:
+            return shruti_path
+
+        return await self._download_with_ytdlp(video_id, video=True)
+
+    async def _download_with_ytdlp(
+        self, video_id: str, video: bool = False
+    ) -> str | None:
+        """Download a local fallback when external media APIs are unavailable."""
+        yt_url = self.base + video_id
+        extension = "mp4" if video else "webm"
+        filename = os.path.join(DOWNLOAD_DIR, f"{video_id}.{extension}")
+        if os.path.isfile(filename) and os.path.getsize(filename) > 0:
+            if await _has_media_stream(filename, video=video):
+                return filename
+            _remove_invalid_media(filename)
+
+        cookie = self.get_cookies()
+        ydl_opts = {
+            "outtmpl": os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s"),
+            "quiet": True,
+            "noplaylist": True,
+            "geo_bypass": True,
+            "no_warnings": True,
+            "overwrites": False,
+            "nocheckcertificate": True,
+        }
+        if cookie:
+            ydl_opts["cookiefile"] = cookie
+        if video:
+            ydl_opts.update(
+                {
+                    "format": (
+                        "bestvideo[height<=?720][width<=?1280][ext=mp4]+"
+                        "bestaudio/best[ext=mp4]/best"
+                    ),
+                    "merge_output_format": "mp4",
+                }
+            )
+        else:
+            ydl_opts["format"] = "bestaudio[ext=webm][acodec=opus]/bestaudio"
+
+        def _download() -> str | None:
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([yt_url])
+            except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError):
+                return None
+            except Exception as exc:
+                logger.warning("yt-dlp fallback failed for %s: %s", video_id, exc)
+                return None
+
+            candidates = [
+                path
+                for path in glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*"))
+                if os.path.isfile(path)
+                and os.path.getsize(path) > 0
+                and not path.endswith((".part", ".ytdl"))
+            ]
+            if video:
+                candidates = [
+                    path for path in candidates if path.lower().endswith(".mp4")
+                ] or candidates
+            else:
+                candidates = [
+                    path
+                    for path in candidates
+                    if path.lower().endswith((".webm", ".m4a", ".opus"))
+                ] or candidates
+            return max(candidates, key=os.path.getmtime) if candidates else None
+
+        downloaded = await asyncio.to_thread(_download)
+        if downloaded and await _has_media_stream(downloaded, video=video):
+            return downloaded
+        if downloaded:
+            _remove_invalid_media(downloaded)
+        return None
 
     async def close(self) -> None:
         """Cancel media housekeeping/download tasks during shutdown."""
