@@ -15,6 +15,7 @@ API_KEY = os.environ.get(
 )  ## Get This API KEY FROM TELEGRAM BOT USERNAME: @SHRUTIAPIBOT
 
 DOWNLOAD_DIR = "downloads"
+MEDIA_RETENTION_SECONDS = 60 * 60
 
 
 def time_to_seconds(time):
@@ -105,6 +106,7 @@ class YouTubeAPI:
         self.status = "https://www.youtube.com/oembed?url="
         self.listbase = "https://youtube.com/playlist?list="
         self.reg = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+        self._cleanup_tasks = {}
 
     @staticmethod
     def _seconds(duration) -> int:
@@ -177,6 +179,37 @@ class YouTubeAPI:
                 os.remove(file_path)
             except OSError:
                 pass
+
+    def schedule_delete(
+        self, file_path: str | None, delay: int = MEDIA_RETENTION_SECONDS
+    ) -> None:
+        """Delete a completed local download after it has been played."""
+        if not file_path or (
+            isinstance(file_path, str)
+            and file_path.startswith(("http://", "https://"))
+        ):
+            return
+
+        previous = self._cleanup_tasks.pop(file_path, None)
+        if previous and not previous.done():
+            previous.cancel()
+
+        async def _delete_later() -> None:
+            try:
+                await asyncio.sleep(delay)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except asyncio.CancelledError:
+                raise
+            except OSError:
+                pass
+            finally:
+                if self._cleanup_tasks.get(file_path) is asyncio.current_task():
+                    self._cleanup_tasks.pop(file_path, None)
+
+        self._cleanup_tasks[file_path] = asyncio.create_task(
+            _delete_later(), name=f"delete-media:{os.path.basename(file_path)}"
+        )
 
     async def save_cookies(self, urls: list[str]) -> None:
         """The attached downloader does not require cookies."""
@@ -388,7 +421,12 @@ class YouTubeAPI:
 
     async def close(self) -> None:
         """Compatibility hook for the application's shutdown sequence."""
-        return None
+        tasks = [task for task in self._cleanup_tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._cleanup_tasks.clear()
 
 
 # The main project creates this provider with ``YouTube()`` in zefron/__init__.py.

@@ -430,6 +430,9 @@ class TgCall(PyTgCalls):
             # connecting.  Do not mark an old stream as active afterwards.
             if generation != self._generation(chat_id):
                 return
+            # Keep downloaded media for one hour after playback starts. The
+            # YouTube adapter resets this timer when the same file is replayed.
+            yt.schedule_delete(getattr(media, "file_path", None))
             if not seek_time:
                 media.time = 1
                 await db.add_call(chat_id)
