@@ -20,6 +20,14 @@ def time_to_seconds(time):
     return sum(int(x) * 60 ** i for i, x in enumerate(reversed(stringt.split(":"))))
 
 
+def _secs_to_str(seconds: int) -> str:
+    minutes, seconds = divmod(int(seconds or 0), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
 async def download_song(link: str) -> str:
     video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
     if not video_id or len(video_id) < 3:
@@ -95,6 +103,80 @@ class YouTubeAPI:
         self.status = "https://www.youtube.com/oembed?url="
         self.listbase = "https://youtube.com/playlist?list="
         self.reg = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+    @staticmethod
+    def _seconds(duration) -> int:
+        if not duration:
+            return 0
+        try:
+            return int(duration) if str(duration).isdigit() else time_to_seconds(duration)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _result_track(result, message_id: int, video: bool):
+        from zefron.helpers._dataclass import Track
+
+        channel = result.get("channel") or ""
+        if isinstance(channel, dict):
+            channel = channel.get("name", "")
+        thumbnails = result.get("thumbnails") or []
+        thumbnail = thumbnails[-1].get("url", "") if thumbnails else ""
+        duration = result.get("duration") or "0:00"
+        video_id = result.get("id")
+        return Track(
+            id=video_id,
+            channel_name=channel,
+            duration=duration,
+            duration_sec=YouTubeAPI._seconds(duration),
+            title=result.get("title", ""),
+            url=result.get("link") or f"https://www.youtube.com/watch?v={video_id}",
+            message_id=message_id,
+            thumbnail=thumbnail.split("?")[0],
+            view_count=(result.get("viewCount") or {}).get("short")
+            if isinstance(result.get("viewCount"), dict)
+            else result.get("viewCount"),
+            video=video,
+        )
+
+    async def search(self, query: str, m_id: int, video: bool = False):
+        """Return the project Track object for the best YouTube result."""
+        if not isinstance(query, str) or not query.strip():
+            return None
+        try:
+            results = await VideosSearch(query.strip(), limit=1).next()
+        except Exception:
+            return None
+        matches = (results or {}).get("result") or []
+        if not matches:
+            return None
+        return self._result_track(matches[0], m_id, video)
+
+    async def direct_stream(self, video_id: str) -> str:
+        """Download the audio file expected by the project's player."""
+        return await download_song(video_id)
+
+    async def probe_duration(self, file_path: str) -> int:
+        """Keep the playback adapter compatible when duration is unavailable."""
+        return 0
+
+    async def has_media_stream(self, file_path: str, video: bool = False) -> bool:
+        if not file_path:
+            return False
+        if isinstance(file_path, str) and file_path.startswith(("http://", "https://")):
+            return True
+        return os.path.isfile(file_path) and os.path.getsize(file_path) > 0
+
+    def invalidate_media(self, file_path: str | None) -> None:
+        if file_path and os.path.isfile(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+
+    async def save_cookies(self, urls: list[str]) -> None:
+        """The attached downloader does not require cookies."""
+        return None
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -172,8 +254,20 @@ class YouTubeAPI:
             return 0, f"Video download error: {e}"
 
     async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
+        project_call = isinstance(link, int)
+        if project_call:
+            project_limit = link
+            project_user = limit
+            project_link = user_id
+            project_video = bool(videoid)
+            link = project_link
+            limit = project_limit
+        else:
+            project_user = None
+            project_video = False
         if videoid:
-            link = self.listbase + link
+            if not project_call:
+                link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
         try:
@@ -182,14 +276,24 @@ class YouTubeAPI:
             return []
         videos = plist.get("videos") or []
         ids = []
+        tracks = []
         for data in videos[:limit]:
             if not data:
                 continue
             vid = data.get("id")
             if not vid:
                 continue
-            ids.append(vid)
-        return ids
+            if not project_call:
+                ids.append(vid)
+                continue
+            track = self._result_track(
+                data,
+                message_id=0,
+                video=project_video,
+            )
+            track.user = project_user
+            tracks.append(track)
+        return tracks if project_call else ids
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -255,7 +359,7 @@ class YouTubeAPI:
     async def download(
         self,
         link: str,
-        mystic,
+        mystic=None,
         video: Union[bool, str] = None,
         videoid: Union[bool, str] = None,
         songaudio: Union[bool, str] = None,
@@ -271,10 +375,14 @@ class YouTubeAPI:
             else:
                 downloaded_file = await download_song(link)
             if downloaded_file:
-                return downloaded_file, True
-            return None, False
+                return downloaded_file
+            return None
         except Exception:
-            return None, False
+            return None
+
+    async def close(self) -> None:
+        """Compatibility hook for the application's shutdown sequence."""
+        return None
 
 
 # The main project creates this provider with ``YouTube()`` in zefron/__init__.py.
