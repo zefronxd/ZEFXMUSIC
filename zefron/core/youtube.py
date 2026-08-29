@@ -277,4 +277,7 @@ class YouTubeAPI:
             return None, False
 
 
-YouTube = YouTubeAPI()
+# The main project creates this provider with ``YouTube()`` in zefron/__init__.py.
+# Export the class here instead of an already-created instance so both module
+# loading and the project's existing initialization path remain compatible.
+YouTube = YouTubeAPI
