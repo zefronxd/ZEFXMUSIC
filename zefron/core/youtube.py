@@ -741,6 +741,34 @@ async def _shruti_download_video(video_id: str) -> str | None:
     return None
 
 
+def _download_video_id(link: str) -> str | None:
+    """Extract the media ID accepted by the imported downloader API."""
+    if not isinstance(link, str):
+        return None
+    value = link.strip()
+    if "v=" in value:
+        value = value.split("v=", 1)[1].split("&", 1)[0]
+    elif "youtu.be/" in value:
+        value = value.split("youtu.be/", 1)[1].split("?", 1)[0].split("&", 1)[0]
+    return value if value and len(value) >= 3 else None
+
+
+async def download_song(link: str) -> str | None:
+    """Download audio using the same API contract as the imported module."""
+    video_id = _download_video_id(link)
+    if not video_id:
+        return None
+    return await _shruti_download_audio(video_id)
+
+
+async def download_video(link: str) -> str | None:
+    """Download video using the same API contract as the imported module."""
+    video_id = _download_video_id(link)
+    if not video_id:
+        return None
+    return await _shruti_download_video(video_id)
+
+
 def _shruti_video_keys() -> list[str]:
     """Return distinct Shruti keys in preferred order.
 
@@ -1122,6 +1150,13 @@ class YouTube:
         if not video_id:
             return None
 
+        # Keep the imported module's ShrutiAPI downloader as the first path.
+        # The existing providers remain available as fallbacks below.
+        imported_song = await download_song(video_id)
+        if imported_song:
+            logger.info("Using imported ShrutiAPI audio source: %s", video_id)
+            return imported_song
+
         # Match the imported downloader's provider order before the existing
         # low-latency provider race.  This endpoint can return a complete MP3
         # without requiring cookies.
@@ -1236,6 +1271,11 @@ class YouTube:
 
     async def _download_video_uncached(self, video_id: str) -> str | None:
         """Use Sparrow URL/API, then local providers for video playback."""
+        imported_video = await download_video(video_id)
+        if imported_video:
+            logger.info("Using imported ShrutiAPI video source: %s", video_id)
+            return imported_video
+
         sparrow_path = await self._download_from_sparrow(video_id)
         if sparrow_path:
             logger.info("Using Sparrow API video source: %s", video_id)
