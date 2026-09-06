@@ -213,18 +213,3 @@ async def _left_member(_, message: types.Message):
         and message.left_chat_member.id == app.id
     ):
         await _notify_gc("removed", message.chat, message.from_user)
-
-@app.on_callback_query(filters.regex("chat_with_me_btn"))
-async def chat_with_me_callback(_, query: types.CallbackQuery):
-    styled_text = (
-        "❖ ʜєʏ ᴛʜєʀє, 🥀\n\n"
-        "» ᴛσ ᴄʜᴧᴛ ᴡɪᴛʜ ᴍє, ᴩʟєᴧsє ᴧᴅᴅ ᴍє ᴛσ ᴧ ɢʀσυᴩ ᴧηᴅ ᴄᴧʟʟ ᴍє ᴧs <b>Riruru</b> σʀ <b>@Riruru_musicbot</b>.\n\n"
-        "» ʏσυ ᴄᴧη ᴧʟsσ ᴛʏᴩє ᴧηʏᴛʜɪηɢ ʜєʀє ɪη ᴅᴍ ᴛσ ᴛᴧʟᴋ ᴛσ ᴍє!\n\n"
-        "•── ⋅ ⋅  ────── ⋅᯽⋅ ────── ⋅ ⋅ ⋅──•"
-    )
-    await query.answer() 
-    await query.message.reply_text(
-        text=styled_text, 
-        parse_mode=enums.ParseMode.HTML,
-        quote=True
-    )

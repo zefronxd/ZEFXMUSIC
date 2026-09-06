@@ -29,7 +29,7 @@ async def init_db_pool():
                 max_size=50,
                 command_timeout=10 
             )
-            logger.info("PostgreSQL Connection Pool Initialized for Zefron Chatbot")
+            logger.info("PostgreSQL Connection Pool Initialized for Zefron")
         except Exception as e:
             logger.error(f"Failed to create database pool: {e}")
 

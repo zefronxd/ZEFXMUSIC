@@ -345,13 +345,6 @@ class Inline:
         rows = [
             [
                 self.ikb(
-                    text="⌾ ᴄʜᴧᴛ ᴡɪᴛʜ ϻє ⌾",
-                    callback_data="chat_with_me_btn",
-                    style=enums.ButtonStyle.SUCCESS,
-                )
-            ],
-            [
-                self.ikb(
                     text=lang["help"],
                     callback_data="start_help",
                     style=enums.ButtonStyle.PRIMARY,

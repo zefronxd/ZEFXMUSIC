@@ -1,8 +1,8 @@
 """Shared outbound HTTP session for provider integrations.
 
 Keeping one connector alive lets aiohttp reuse DNS results and TCP/TLS
-connections across YouTube, Spotify, lyrics, recommendation, and chatbot
-requests.  The session is created lazily because the bot constructs several
+connections across YouTube, Spotify, lyrics, recommendation, and other
+provider requests.  The session is created lazily because the bot constructs several
 modules before its asyncio event loop starts.
 """
 
