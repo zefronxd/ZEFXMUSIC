@@ -1,21 +1,38 @@
 import asyncio
+import glob
+import logging
 import os
 import re
+from urllib.parse import parse_qs, urlparse
 from typing import Union
 import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from py_yt import VideosSearch, Playlist
 import aiohttp
+from zefron.core.http import get_http_session
 
-API_URL = os.environ.get("SHRUTI_API_URL", "https://api.shrutibots.site")
+API_URL = (
+    os.environ.get("ApiUrl")
+    or os.environ.get("SHRUTI_API_URL")
+    or "https://shrutibots.site"
+).rstrip("/")
+API_URL_FALLBACKS = (
+    "https://shrutibots.site",
+    "https://api.shrutibots.site",
+)
 
 API_KEY = os.environ.get(
-    "SHRUTI_API_KEY", "ShrutiBotsdZvv4dyovLZxvFlVzZhv4"
+    "APIKey",
+    os.environ.get("SHRUTI_API_KEY", ""),
 )  ## Get This API KEY FROM TELEGRAM BOT USERNAME: @SHRUTIAPIBOT
+YUKI_STREAM_URL = "https://music.yukiapi.site/stream"
+YUKI_API_KEY = os.environ.get("YUKI_API_KEY", "")
+BAKAGAME_DOWNLOAD_URL = "https://ytapi.bakagame.online/api/download"
 
 DOWNLOAD_DIR = "downloads"
 MEDIA_RETENTION_SECONDS = 60 * 60
+LOGGER = logging.getLogger(__name__)
 
 
 def time_to_seconds(time):
@@ -32,71 +49,302 @@ def _secs_to_str(seconds: int) -> str:
 
 
 async def download_song(link: str) -> str:
-    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
+    video_id = _video_id(link)
     if not video_id or len(video_id) < 3:
         return None
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+    if await _is_valid_media_file(file_path):
         return file_path
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{API_URL}/download",
-                params={"url": video_id, "type": "audio", "api_key": API_KEY},
-                timeout=aiohttp.ClientTimeout(total=300),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                with open(file_path, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(131072):
-                        f.write(chunk)
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            return file_path
-        return None
-    except Exception:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-        return None
+    if await _download_from_sources(video_id, "audio", file_path, timeout=300):
+        return file_path
+
+    return await _download_with_ytdlp(video_id, video=False)
 
 
 async def download_video(link: str) -> str:
-    video_id = link.split("v=")[-1].split("&")[0] if "v=" in link else link
+    video_id = _video_id(link)
     if not video_id or len(video_id) < 3:
         return None
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+    if await _is_valid_media_file(file_path):
         return file_path
 
+    if await _download_from_sources(video_id, "video", file_path, timeout=600):
+        return file_path
+
+    return await _download_with_ytdlp(video_id, video=True)
+
+
+def _provider_urls() -> list[str]:
+    """Return configured and known provider hosts without duplicates."""
+    urls = [API_URL, *API_URL_FALLBACKS]
+    return list(dict.fromkeys(url.rstrip("/") for url in urls if url))
+
+
+async def _download_source(
+    session: aiohttp.ClientSession,
+    url: str,
+    params: dict[str, str],
+    headers: dict[str, str],
+    temp_path: str,
+    timeout: int,
+    source_name: str,
+) -> str | None:
+    """Download one source into an isolated temp file and return it if valid."""
+    downloaded = False
+    _remove_file(temp_path)
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{API_URL}/download",
-                params={"url": video_id, "type": "video", "api_key": API_KEY},
-                timeout=aiohttp.ClientTimeout(total=600),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                with open(file_path, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(131072):
-                        f.write(chunk)
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            return file_path
-        return None
+        async with session.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as response:
+            if response.status != 200:
+                LOGGER.warning(
+                    "%s download failed: HTTP %s",
+                    source_name,
+                    response.status,
+                )
+                return None
+            with open(temp_path, "wb") as output:
+                async for chunk in response.content.iter_chunked(131072):
+                    output.write(chunk)
+
+        if await _is_valid_media_file(temp_path):
+            downloaded = True
+            return temp_path
+        LOGGER.warning("%s returned invalid media", source_name)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        LOGGER.warning(
+            "%s request failed: %s",
+            source_name,
+            type(exc).__name__,
+        )
+    finally:
+        if not downloaded:
+            _remove_file(temp_path)
+    return None
+
+
+async def _download_from_sources(
+    video_id: str,
+    media_type: str,
+    file_path: str,
+    timeout: int,
+) -> bool:
+    """Race all configured media sources and keep the first valid result."""
+    session = await get_http_session()
+    sources: list[tuple[str, str, dict[str, str], dict[str, str]]] = []
+    accept = "audio/mpeg" if media_type == "audio" else "video/*"
+
+    for base_url in _provider_urls():
+        sources.append(
+            (
+                f"ShrutiAPI {base_url}",
+                f"{base_url}/download",
+                {
+                    "url": video_id,
+                    "type": media_type,
+                    "api_key": API_KEY,
+                },
+                {"Accept": accept},
+            )
+        )
+
+    # BakaGame returns a direct audio redirect and does not need an API key.
+    # It is an audio source because its endpoint returns MP3 media.
+    if media_type == "audio":
+        sources.append(
+            (
+                "BakaGame API",
+                BAKAGAME_DOWNLOAD_URL,
+                {"id": video_id},
+                {"Accept": "audio/mpeg"},
+            )
+        )
+        if YUKI_API_KEY:
+            sources.append(
+                (
+                    "YukiAPI",
+                    f"{YUKI_STREAM_URL}/{video_id}",
+                    {"key": YUKI_API_KEY},
+                    {"Accept": "audio/*"},
+                )
+            )
+
+    tasks = [
+        asyncio.create_task(
+            _download_source(
+                session,
+                url,
+                params,
+                headers,
+                f"{file_path}.{index}.part",
+                timeout,
+                source_name,
+            )
+        )
+        for index, (source_name, url, params, headers) in enumerate(sources)
+    ]
+    pending = set(tasks)
+    winner_temp: str | None = None
+    winner_moved = False
+
+    try:
+        while pending and winner_temp is None:
+            done, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                try:
+                    result = task.result()
+                except asyncio.CancelledError:
+                    continue
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Media source task failed: %s",
+                        type(exc).__name__,
+                    )
+                    continue
+                if result:
+                    winner_temp = result
+                    break
+
+        if winner_temp:
+            _remove_file(file_path)
+            os.replace(winner_temp, file_path)
+            winner_moved = True
+            LOGGER.info(
+                "Selected first valid %s source for %s",
+                media_type,
+                video_id,
+            )
+            return True
+        return False
+    finally:
+        for task in pending:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, str) and result != winner_temp:
+                _remove_file(result)
+        if winner_temp and not winner_moved:
+            _remove_file(winner_temp)
+
+
+def _video_id(link: str) -> str:
+    """Extract a safe YouTube ID from an ID or common YouTube URL."""
+    value = str(link or "").strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        return value.split("&", 1)[0]
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    if host == "youtu.be":
+        return parsed.path.strip("/").split("/", 1)[0]
+    if host.endswith("youtube.com"):
+        query_id = parse_qs(parsed.query).get("v", [""])[0]
+        if query_id:
+            return query_id
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live"}:
+            return parts[1]
+    return ""
+
+
+def _remove_file(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+async def _is_valid_media_file(path: str) -> bool:
+    """Reject provider error pages/JSON saved with an audio/video extension."""
+    if not path or not os.path.isfile(path) or os.path.getsize(path) <= 0:
+        return False
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=format_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await process.communicate()
+        return process.returncode == 0 and bool(stdout.strip())
+    except (OSError, asyncio.CancelledError):
+        return False
+
+
+def _download_with_ytdlp_sync(video_id: str, video: bool) -> str | None:
+    """Last-resort local download when the media provider returns bad data."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    output = os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s")
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "outtmpl": output,
+        "format": "bestvideo*+bestaudio/best" if video else "bestaudio/best",
+        "js_runtimes": {"deno": {}},
+    }
+    cookie_file = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("YT_COOKIES")
+    if cookie_file and os.path.isfile(cookie_file):
+        options["cookiefile"] = cookie_file
+    if not video:
+        options.update(
+            {
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ]
+            }
+        )
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            ydl.download([url])
+        candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*")))
+        candidates = [
+            path
+            for path in candidates
+            if not path.endswith(".part") and os.path.getsize(path) > 0
+        ]
+        if video:
+            return candidates[0] if candidates else None
+        candidate = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
+        return (
+            candidate
+            if os.path.isfile(candidate) and os.path.getsize(candidate)
+            else None
+        )
     except Exception:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
         return None
+
+
+async def _download_with_ytdlp(video_id: str, video: bool) -> str | None:
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    return await asyncio.to_thread(_download_with_ytdlp_sync, video_id, video)
 
 
 class YouTubeAPI:
@@ -118,6 +366,17 @@ class YouTubeAPI:
             )
         except (TypeError, ValueError):
             return 0
+
+    def valid(self, link: str) -> bool:
+        """Return whether a URL points to YouTube media."""
+        parsed = urlparse(str(link or "").strip())
+        host = (parsed.hostname or "").lower()
+        return host == "youtu.be" or host.endswith("youtube.com")
+
+    def invalid(self, link: str) -> bool:
+        """Return whether a supplied URL is malformed or not HTTP(S)."""
+        parsed = urlparse(str(link or "").strip())
+        return parsed.scheme not in {"http", "https"} or not parsed.netloc
 
     @staticmethod
     def _result_track(result, message_id: int, video: bool):
@@ -151,12 +410,33 @@ class YouTubeAPI:
             return None
         try:
             results = await VideosSearch(query.strip(), limit=1).next()
+            matches = (results or {}).get("result") or []
         except Exception:
-            return None
-        matches = (results or {}).get("result") or []
+            matches = []
+        if not matches:
+            try:
+                matches = await asyncio.to_thread(self._ytdlp_search, query.strip())
+            except Exception:
+                matches = []
         if not matches:
             return None
         return self._result_track(matches[0], m_id, video)
+
+    @staticmethod
+    def _ytdlp_search(query: str) -> list[dict]:
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "noplaylist": True,
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+            return info.get("entries") or []
+        except Exception:
+            return []
 
     async def direct_stream(self, video_id: str) -> str:
         """Download the audio file expected by the project's player."""
@@ -185,8 +465,7 @@ class YouTubeAPI:
     ) -> None:
         """Delete a completed local download after it has been played."""
         if not file_path or (
-            isinstance(file_path, str)
-            and file_path.startswith(("http://", "https://"))
+            isinstance(file_path, str) and file_path.startswith(("http://", "https://"))
         ):
             return
 
@@ -405,6 +684,7 @@ class YouTubeAPI:
         songvideo: Union[bool, str] = None,
         format_id: Union[bool, str] = None,
         title: Union[bool, str] = None,
+        direct: Union[bool, str] = None,
     ) -> str:
         if videoid:
             link = self.base + link
