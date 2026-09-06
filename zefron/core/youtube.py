@@ -193,7 +193,10 @@ async def _download_source(
         if await _is_valid_media_file(temp_path):
             downloaded = True
             return temp_path
-        LOGGER.warning("%s returned invalid media", source_name)
+        # In a parallel race, a losing provider can legitimately return an
+        # unusable response while another provider succeeds. Keep this detail
+        # out of warning-level logs unless every source fails.
+        LOGGER.debug("%s returned invalid media", source_name)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -254,20 +257,24 @@ async def _download_from_sources(
                 )
             )
 
-    tasks = [
-        asyncio.create_task(
-            _download_source(
-                session,
-                url,
-                params,
-                headers,
-                f"{file_path}.{index}.part",
-                timeout,
-                source_name,
+    source_paths: dict[str, str] = {}
+    tasks = []
+    for index, (source_name, url, params, headers) in enumerate(sources):
+        temp_path = f"{file_path}.{index}.part"
+        source_paths[temp_path] = source_name
+        tasks.append(
+            asyncio.create_task(
+                _download_source(
+                    session,
+                    url,
+                    params,
+                    headers,
+                    temp_path,
+                    timeout,
+                    source_name,
+                )
             )
         )
-        for index, (source_name, url, params, headers) in enumerate(sources)
-    ]
     pending = set(tasks)
     winner_temp: str | None = None
     winner_moved = False
@@ -298,8 +305,9 @@ async def _download_from_sources(
             os.replace(winner_temp, file_path)
             winner_moved = True
             LOGGER.info(
-                "Selected first valid %s source for %s",
+                "Selected first valid %s source=%s for %s",
                 media_type,
+                source_paths.get(winner_temp, "unknown"),
                 video_id,
             )
             return True
