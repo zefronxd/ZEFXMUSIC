@@ -3,6 +3,7 @@ import glob
 import logging
 import os
 import re
+import time
 from urllib.parse import parse_qs, urlparse
 from typing import Union
 import yt_dlp
@@ -11,6 +12,7 @@ from pyrogram.types import Message
 from py_yt import VideosSearch, Playlist
 import aiohttp
 from zefron.core.http import get_http_session
+from zefron.core.metrics import log_timing
 
 API_URL = (
     os.environ.get("ApiUrl")
@@ -22,10 +24,9 @@ API_URL_FALLBACKS = (
     "https://api.shrutibots.site",
 )
 
-API_KEY = os.environ.get(
-    "APIKey",
-    os.environ.get("SHRUTI_API_KEY", ""),
-)  ## Get This API KEY FROM TELEGRAM BOT USERNAME: @SHRUTIAPIBOT
+# SHRUTI_API_KEY is the canonical credential. APIKey is kept as a legacy
+# alias, but must not override a valid Shruti-specific key.
+API_KEY = os.environ.get("SHRUTI_API_KEY") or os.environ.get("APIKey", "")
 YUKI_STREAM_URL = "https://music.yukiapi.site/stream"
 YUKI_API_KEY = os.environ.get("YUKI_API_KEY", "")
 BAKAGAME_DOWNLOAD_URL = "https://ytapi.bakagame.online/api/download"
@@ -49,6 +50,7 @@ def _secs_to_str(seconds: int) -> str:
 
 
 async def download_song(link: str) -> str:
+    started = time.perf_counter()
     video_id = _video_id(link)
     if not video_id or len(video_id) < 3:
         return None
@@ -56,15 +58,38 @@ async def download_song(link: str) -> str:
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
     if await _is_valid_media_file(file_path):
+        _log_download_timing(
+            "song",
+            started,
+            video_id,
+            file_path,
+            "cache",
+        )
         return file_path
 
     if await _download_from_sources(video_id, "audio", file_path, timeout=300):
+        _log_download_timing(
+            "song",
+            started,
+            video_id,
+            file_path,
+            "provider",
+        )
         return file_path
 
-    return await _download_with_ytdlp(video_id, video=False)
+    downloaded = await _download_with_ytdlp(video_id, video=False)
+    _log_download_timing(
+        "song",
+        started,
+        video_id,
+        downloaded,
+        "ytdlp" if downloaded else "failed",
+    )
+    return downloaded
 
 
 async def download_video(link: str) -> str:
+    started = time.perf_counter()
     video_id = _video_id(link)
     if not video_id or len(video_id) < 3:
         return None
@@ -72,12 +97,61 @@ async def download_video(link: str) -> str:
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
     if await _is_valid_media_file(file_path):
+        _log_download_timing(
+            "video",
+            started,
+            video_id,
+            file_path,
+            "cache",
+        )
         return file_path
 
     if await _download_from_sources(video_id, "video", file_path, timeout=600):
+        _log_download_timing(
+            "video",
+            started,
+            video_id,
+            file_path,
+            "provider",
+        )
         return file_path
 
-    return await _download_with_ytdlp(video_id, video=True)
+    downloaded = await _download_with_ytdlp(video_id, video=True)
+    _log_download_timing(
+        "video",
+        started,
+        video_id,
+        downloaded,
+        "ytdlp" if downloaded else "failed",
+    )
+    return downloaded
+
+
+def _log_download_timing(
+    media_type: str,
+    started: float,
+    video_id: str,
+    file_path: str | None,
+    result: str,
+) -> None:
+    """Log total download time and the resulting file's approximate rate."""
+    size_bytes = 0
+    if file_path and os.path.isfile(file_path):
+        try:
+            size_bytes = os.path.getsize(file_path)
+        except OSError:
+            pass
+    elapsed_seconds = max(time.perf_counter() - started, 0.001)
+    size_mb = size_bytes / (1024 * 1024)
+    speed_mbps = size_mb / elapsed_seconds
+    log_timing(
+        f"download.{media_type}",
+        started,
+        media_id=video_id,
+        result=result,
+        size_mb=round(size_mb, 2),
+        speed_mbps=round(speed_mbps, 2),
+    )
 
 
 def _provider_urls() -> list[str]:
