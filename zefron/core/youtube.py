@@ -6,34 +6,74 @@ import re
 import time
 from urllib.parse import parse_qs, urlparse
 from typing import Union
+
+import aiofiles
+import aiohttp
 import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from py_yt import VideosSearch, Playlist
-import aiohttp
+
 from zefron.core.http import get_http_session
 from zefron.core.metrics import log_timing
 
-API_URL = (
-    os.environ.get("ApiUrl")
-    or os.environ.get("SHRUTI_API_URL")
-    or "https://shrutibots.site"
-).rstrip("/")
-API_URL_FALLBACKS = (
-    "https://shrutibots.site",
-    "https://api.shrutibots.site",
-)
+try:
+    from ytmusicapi import YTMusic
+except Exception:  # ytmusicapi not installed
+    YTMusic = None
 
-# SHRUTI_API_KEY is the canonical credential. APIKey is kept as a legacy
-# alias, but must not override a valid Shruti-specific key.
-API_KEY = os.environ.get("SHRUTI_API_KEY") or os.environ.get("APIKey", "")
-YUKI_STREAM_URL = "https://music.yukiapi.site/stream"
-YUKI_API_KEY = os.environ.get("YUKI_API_KEY", "")
-BAKAGAME_DOWNLOAD_URL = "https://ytapi.bakagame.online/api/download"
+LOGGER = logging.getLogger(__name__)
+
+# ------------------------------------------------------------ Zefron API
+# GET {ZEFRON_API_URL}/download?url=VIDEO_ID&type=audio|video&api_key=KEY
+ZEFRON_API_URL = (os.environ.get("ZEFRON_API_URL") or "https://zefronapi.me").rstrip("/")
+ZEFRON_API_KEY = (os.environ.get("ZEFRON_API_KEY") or "").strip()
+ZEFRON_RETRIES = int(os.environ.get("ZEFRON_RETRIES", "2"))
+
+# Song search hard limit (seconds). Whole search (incl. retries) never exceeds this.
+SEARCH_TIMEOUT = float(os.environ.get("SEARCH_TIMEOUT", "10"))
+SEARCH_ATTEMPTS = max(1, int(os.environ.get("SEARCH_ATTEMPTS", "2")))
 
 DOWNLOAD_DIR = "downloads"
+DOWNLOAD_CONCURRENCY = int(os.environ.get("DOWNLOAD_CONCURRENCY", "4"))
 MEDIA_RETENTION_SECONDS = 60 * 60
-LOGGER = logging.getLogger(__name__)
+_semaphore = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+    return _semaphore
+
+
+def _env_dir(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return os.path.abspath(os.path.expanduser(value)) if value else ""
+
+
+AUDIO_DOWNLOAD_PATH = _env_dir("AUDIO_DOWNLOAD_PATH")
+VIDEO_DOWNLOAD_PATH = _env_dir("VIDEO_DOWNLOAD_PATH")
+AUDIO_EXTENSIONS = ("webm", "m4a", "mp3", "ogg")
+VIDEO_EXTENSIONS = ("mp4", "mkv", "webm")
+
+
+def is_external_path(path) -> bool:
+    if not path:
+        return False
+    full = os.path.abspath(str(path))
+    for base in (AUDIO_DOWNLOAD_PATH, VIDEO_DOWNLOAD_PATH):
+        if base and full.startswith(base + os.sep):
+            return True
+    return False
+
+
+def _find_external(directory: str, video_id: str, extensions):
+    for ext in extensions:
+        path = os.path.join(directory, f"{video_id}.{ext}")
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            return path
+    return None
 
 
 def time_to_seconds(time):
@@ -47,280 +87,6 @@ def _secs_to_str(seconds: int) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
-
-
-async def download_song(link: str) -> str:
-    started = time.perf_counter()
-    video_id = _video_id(link)
-    if not video_id or len(video_id) < 3:
-        return None
-
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-    if await _is_valid_media_file(file_path):
-        _log_download_timing(
-            "song",
-            started,
-            video_id,
-            file_path,
-            "cache",
-        )
-        return file_path
-
-    if await _download_from_sources(video_id, "audio", file_path, timeout=300):
-        _log_download_timing(
-            "song",
-            started,
-            video_id,
-            file_path,
-            "provider",
-        )
-        return file_path
-
-    downloaded = await _download_with_ytdlp(video_id, video=False)
-    _log_download_timing(
-        "song",
-        started,
-        video_id,
-        downloaded,
-        "ytdlp" if downloaded else "failed",
-    )
-    return downloaded
-
-
-async def download_video(link: str) -> str:
-    started = time.perf_counter()
-    video_id = _video_id(link)
-    if not video_id or len(video_id) < 3:
-        return None
-
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp4")
-    if await _is_valid_media_file(file_path):
-        _log_download_timing(
-            "video",
-            started,
-            video_id,
-            file_path,
-            "cache",
-        )
-        return file_path
-
-    if await _download_from_sources(video_id, "video", file_path, timeout=600):
-        _log_download_timing(
-            "video",
-            started,
-            video_id,
-            file_path,
-            "provider",
-        )
-        return file_path
-
-    downloaded = await _download_with_ytdlp(video_id, video=True)
-    _log_download_timing(
-        "video",
-        started,
-        video_id,
-        downloaded,
-        "ytdlp" if downloaded else "failed",
-    )
-    return downloaded
-
-
-def _log_download_timing(
-    media_type: str,
-    started: float,
-    video_id: str,
-    file_path: str | None,
-    result: str,
-) -> None:
-    """Log total download time and the resulting file's approximate rate."""
-    size_bytes = 0
-    if file_path and os.path.isfile(file_path):
-        try:
-            size_bytes = os.path.getsize(file_path)
-        except OSError:
-            pass
-    elapsed_seconds = max(time.perf_counter() - started, 0.001)
-    size_mb = size_bytes / (1024 * 1024)
-    speed_mbps = size_mb / elapsed_seconds
-    log_timing(
-        f"download.{media_type}",
-        started,
-        media_id=video_id,
-        result=result,
-        size_mb=round(size_mb, 2),
-        speed_mbps=round(speed_mbps, 2),
-    )
-
-
-def _provider_urls() -> list[str]:
-    """Return configured and known provider hosts without duplicates."""
-    urls = [API_URL, *API_URL_FALLBACKS]
-    return list(dict.fromkeys(url.rstrip("/") for url in urls if url))
-
-
-async def _download_source(
-    session: aiohttp.ClientSession,
-    url: str,
-    params: dict[str, str],
-    headers: dict[str, str],
-    temp_path: str,
-    timeout: int,
-    source_name: str,
-) -> str | None:
-    """Download one source into an isolated temp file and return it if valid."""
-    downloaded = False
-    _remove_file(temp_path)
-    try:
-        async with session.get(
-            url,
-            params=params,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as response:
-            if response.status != 200:
-                LOGGER.warning(
-                    "%s download failed: HTTP %s",
-                    source_name,
-                    response.status,
-                )
-                return None
-            with open(temp_path, "wb") as output:
-                async for chunk in response.content.iter_chunked(131072):
-                    output.write(chunk)
-
-        if await _is_valid_media_file(temp_path):
-            downloaded = True
-            return temp_path
-        # In a parallel race, a losing provider can legitimately return an
-        # unusable response while another provider succeeds. Keep this detail
-        # out of warning-level logs unless every source fails.
-        LOGGER.debug("%s returned invalid media", source_name)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        LOGGER.warning(
-            "%s request failed: %s",
-            source_name,
-            type(exc).__name__,
-        )
-    finally:
-        if not downloaded:
-            _remove_file(temp_path)
-    return None
-
-
-async def _download_from_sources(
-    video_id: str,
-    media_type: str,
-    file_path: str,
-    timeout: int,
-) -> bool:
-    """Race all configured media sources and keep the first valid result."""
-    session = await get_http_session()
-    sources: list[tuple[str, str, dict[str, str], dict[str, str]]] = []
-    accept = "audio/mpeg" if media_type == "audio" else "video/*"
-
-    for base_url in _provider_urls():
-        sources.append(
-            (
-                f"ShrutiAPI {base_url}",
-                f"{base_url}/download",
-                {
-                    "url": video_id,
-                    "type": media_type,
-                    "api_key": API_KEY,
-                },
-                {"Accept": accept},
-            )
-        )
-
-    # BakaGame returns a direct audio redirect and does not need an API key.
-    # It is an audio source because its endpoint returns MP3 media.
-    if media_type == "audio":
-        sources.append(
-            (
-                "BakaGame API",
-                BAKAGAME_DOWNLOAD_URL,
-                {"id": video_id},
-                {"Accept": "audio/mpeg"},
-            )
-        )
-        if YUKI_API_KEY:
-            sources.append(
-                (
-                    "YukiAPI",
-                    f"{YUKI_STREAM_URL}/{video_id}",
-                    {"key": YUKI_API_KEY},
-                    {"Accept": "audio/*"},
-                )
-            )
-
-    source_paths: dict[str, str] = {}
-    tasks = []
-    for index, (source_name, url, params, headers) in enumerate(sources):
-        temp_path = f"{file_path}.{index}.part"
-        source_paths[temp_path] = source_name
-        tasks.append(
-            asyncio.create_task(
-                _download_source(
-                    session,
-                    url,
-                    params,
-                    headers,
-                    temp_path,
-                    timeout,
-                    source_name,
-                )
-            )
-        )
-    pending = set(tasks)
-    winner_temp: str | None = None
-    winner_moved = False
-
-    try:
-        while pending and winner_temp is None:
-            done, pending = await asyncio.wait(
-                pending,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in done:
-                try:
-                    result = task.result()
-                except asyncio.CancelledError:
-                    continue
-                except Exception as exc:
-                    LOGGER.warning(
-                        "Media source task failed: %s",
-                        type(exc).__name__,
-                    )
-                    continue
-                if result:
-                    winner_temp = result
-                    break
-
-        if winner_temp:
-            _remove_file(file_path)
-            os.replace(winner_temp, file_path)
-            winner_moved = True
-            LOGGER.info(
-                "Selected first valid %s source=%s for %s",
-                media_type,
-                source_paths.get(winner_temp, "unknown"),
-                video_id,
-            )
-            return True
-        return False
-    finally:
-        for task in pending:
-            task.cancel()
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, str) and result != winner_temp:
-                _remove_file(result)
-        if winner_temp and not winner_moved:
-            _remove_file(winner_temp)
 
 
 def _video_id(link: str) -> str:
@@ -347,8 +113,6 @@ def _video_id(link: str) -> str:
 def _remove_file(path: str) -> None:
     try:
         os.remove(path)
-    except FileNotFoundError:
-        pass
     except OSError:
         pass
 
@@ -376,8 +140,145 @@ async def _is_valid_media_file(path: str) -> bool:
         return False
 
 
+def _log_download_timing(
+    media_type: str,
+    started: float,
+    video_id: str,
+    file_path: str | None,
+    result: str,
+) -> None:
+    """Log total download time and the resulting file's approximate rate."""
+    size_bytes = 0
+    if file_path and os.path.isfile(file_path):
+        try:
+            size_bytes = os.path.getsize(file_path)
+        except OSError:
+            pass
+    elapsed_seconds = max(time.perf_counter() - started, 0.001)
+    size_mb = size_bytes / (1024 * 1024)
+    log_timing(
+        f"download.{media_type}",
+        started,
+        media_id=video_id,
+        result=result,
+        size_mb=round(size_mb, 2),
+        speed_mbps=round(size_mb / elapsed_seconds, 2),
+    )
+
+
+# ------------------------------------------------------------ downloading
+# Errors that retrying cannot fix: a bad / expired key or an used-up daily limit.
+_FATAL_STATUS = {
+    400: "bad request",
+    401: "API key invalid or expired - generate a new one in the Zefron bot (/apikey)",
+    429: "daily download limit reached",
+}
+
+
+async def _download_zefron(session, video_id, path, kind) -> bool:
+    """Download one file from the Zefron API. Returns True when `path` was written."""
+    temp_path = f"{path}.part"
+    timeout = aiohttp.ClientTimeout(
+        total=300 if kind == "audio" else 600,
+        connect=10,
+        sock_connect=10,
+        sock_read=60,
+    )
+    params = {"url": video_id, "type": kind, "api_key": ZEFRON_API_KEY}
+    try:
+        async with session.get(
+            f"{ZEFRON_API_URL}/download", params=params, timeout=timeout
+        ) as response:
+            if response.status in _FATAL_STATUS:
+                LOGGER.warning(
+                    "Zefron API %s: %s", response.status, _FATAL_STATUS[response.status]
+                )
+                raise PermissionError(response.status)
+            if response.status != 200:
+                LOGGER.warning(
+                    "Zefron API returned %s for %s (%s)", response.status, video_id, kind
+                )
+                return False
+            content_type = response.headers.get("Content-Type", "").lower()
+            if "json" in content_type or content_type.startswith("text/"):
+                return False
+            if kind == "audio" and content_type.startswith("video/"):
+                return False
+            async with aiofiles.open(temp_path, "wb") as output:
+                async for chunk in response.content.iter_chunked(131072):
+                    await output.write(chunk)
+        if await _is_valid_media_file(temp_path):
+            os.replace(temp_path, path)
+            return True
+    except PermissionError:
+        raise
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        pass
+    finally:
+        if os.path.exists(temp_path):
+            await asyncio.to_thread(_remove_file, temp_path)
+    return False
+
+
+async def _download_unlimited(link: str, kind: str) -> str | None:
+    started = time.perf_counter()
+    video_id = _video_id(link)
+    if not video_id or len(video_id) < 3:
+        return None
+
+    is_audio = kind == "audio"
+    external = AUDIO_DOWNLOAD_PATH if is_audio else VIDEO_DOWNLOAD_PATH
+    extensions = AUDIO_EXTENSIONS if is_audio else VIDEO_EXTENSIONS
+
+    if external:
+        found = _find_external(external, video_id, extensions)
+        if found:
+            _log_download_timing(kind, started, video_id, found, "external")
+            return found
+
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{'mp3' if is_audio else 'mp4'}")
+    if await _is_valid_media_file(path):
+        _log_download_timing(kind, started, video_id, path, "cache")
+        return path
+
+    if not ZEFRON_API_KEY:
+        LOGGER.error("ZEFRON_API_KEY is not set")
+    else:
+        session = await get_http_session()
+        attempts = max(1, ZEFRON_RETRIES)
+        for attempt in range(1, attempts + 1):
+            try:
+                if await _download_zefron(session, video_id, path, kind):
+                    _log_download_timing(kind, started, video_id, path, "provider")
+                    return path
+            except PermissionError:
+                break  # retrying will not help
+            if attempt < attempts:
+                await asyncio.sleep(1)
+
+    # Last resort: local yt-dlp download (remove this block to disable it).
+    downloaded = await _download_with_ytdlp(video_id, video=not is_audio)
+    _log_download_timing(
+        kind, started, video_id, downloaded, "ytdlp" if downloaded else "failed"
+    )
+    return downloaded
+
+
+async def _download(link: str, kind: str) -> str | None:
+    async with _get_semaphore():
+        return await _download_unlimited(link, kind)
+
+
+async def download_song(link: str) -> str | None:
+    return await _download(link, "audio")
+
+
+async def download_video(link: str) -> str | None:
+    return await _download(link, "video")
+
+
 def _download_with_ytdlp_sync(video_id: str, video: bool) -> str | None:
-    """Last-resort local download when the media provider returns bad data."""
     url = f"https://www.youtube.com/watch?v={video_id}"
     output = os.path.join(DOWNLOAD_DIR, f"{video_id}.%(ext)s")
     options = {
@@ -392,34 +293,26 @@ def _download_with_ytdlp_sync(video_id: str, video: bool) -> str | None:
     if cookie_file and os.path.isfile(cookie_file):
         options["cookiefile"] = cookie_file
     if not video:
-        options.update(
+        options["postprocessors"] = [
             {
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }
-                ]
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
             }
-        )
+        ]
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
-        candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*")))
-        candidates = [
-            path
-            for path in candidates
-            if not path.endswith(".part") and os.path.getsize(path) > 0
-        ]
         if video:
+            candidates = sorted(glob.glob(os.path.join(DOWNLOAD_DIR, f"{video_id}.*")))
+            candidates = [
+                p for p in candidates if not p.endswith(".part") and os.path.getsize(p) > 0
+            ]
             return candidates[0] if candidates else None
         candidate = os.path.join(DOWNLOAD_DIR, f"{video_id}.mp3")
-        return (
-            candidate
-            if os.path.isfile(candidate) and os.path.getsize(candidate)
-            else None
-        )
+        if os.path.isfile(candidate) and os.path.getsize(candidate):
+            return candidate
+        return None
     except Exception:
         return None
 
@@ -427,6 +320,122 @@ def _download_with_ytdlp_sync(video_id: str, video: bool) -> str | None:
 async def _download_with_ytdlp(video_id: str, video: bool) -> str | None:
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     return await asyncio.to_thread(_download_with_ytdlp_sync, video_id, video)
+
+
+# ----------------------------------------------------------------- search
+async def _search(query: str, limit: int = 1) -> list:
+    """YouTube search with a hard overall time limit (SEARCH_TIMEOUT seconds).
+
+    The time budget is split between the attempts, so a slow / stuck request is
+    cancelled and retried instead of making the user wait. Raises TimeoutError
+    if nothing is found in time.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SEARCH_TIMEOUT
+    for attempt in range(SEARCH_ATTEMPTS):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        per_attempt = remaining / (SEARCH_ATTEMPTS - attempt)
+        try:
+            data = await asyncio.wait_for(
+                VideosSearch(query, limit=limit).next(), per_attempt
+            )
+            result = (data or {}).get("result") or []
+            if result:
+                return result
+        except Exception as e:
+            LOGGER.warning("YouTube search attempt %s failed: %s", attempt + 1, e)
+    raise TimeoutError(f"YouTube search failed within {SEARCH_TIMEOUT:g}s")
+
+
+# --------------------------------------------------------------- autoplay
+AUTOPLAY_REQUEST_TIMEOUT = 20
+AUTOPLAY_MAX_RETRIES = 3
+AUTOPLAY_RETRY_DELAY = 1
+MAX_TRACK_SECONDS = 900
+
+_ytmusic = None
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def _length_to_seconds(value) -> int:
+    try:
+        parts = [int(x) for x in str(value).split(":")]
+    except Exception:
+        return 0
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return seconds
+
+
+def _ytmusic_radio(video_id: str, limit: int) -> list:
+    global _ytmusic
+    if YTMusic is None:
+        return []
+    if _ytmusic is None:
+        _ytmusic = YTMusic()
+    data = _ytmusic.get_watch_playlist(videoId=video_id, radio=True, limit=limit)
+    tracks = []
+    for item in data.get("tracks", []):
+        vid = item.get("videoId")
+        if not vid or vid == video_id or not _ID_RE.match(vid):
+            continue
+        duration = item.get("duration_seconds") or _length_to_seconds(item.get("length"))
+        if not duration or duration > MAX_TRACK_SECONDS:
+            continue
+        artists = ", ".join(
+            a.get("name", "") for a in item.get("artists") or [] if a.get("name")
+        )
+        title = item.get("title") or "Autoplay Track"
+        tracks.append(
+            {
+                "video_id": vid,
+                "title": f"{title} - {artists}" if artists else title,
+                "duration": int(duration),
+            }
+        )
+    return tracks
+
+
+async def get_autoplay(
+    video_id: str,
+    timeout: int = AUTOPLAY_REQUEST_TIMEOUT,
+    retries: int = AUTOPLAY_MAX_RETRIES,
+    seed_id: str = None,
+) -> list:
+    video_id = _video_id(video_id)
+    if not video_id or len(video_id) < 3:
+        return []
+
+    loop = asyncio.get_running_loop()
+    sources = [video_id]
+    if seed_id and seed_id != video_id and _ID_RE.match(str(seed_id)):
+        sources.append(seed_id)
+
+    for attempt in range(1, retries + 1):
+        try:
+            results = []
+            for source in sources:
+                found = await asyncio.wait_for(
+                    loop.run_in_executor(None, _ytmusic_radio, source, 25),
+                    timeout,
+                )
+                results.append(found)
+            merged, seen = [], set()
+            for i in range(max((len(r) for r in results), default=0)):
+                for r in results:
+                    if i < len(r) and r[i]["video_id"] not in seen:
+                        seen.add(r[i]["video_id"])
+                        merged.append(r[i])
+            if merged:
+                return merged
+        except Exception:
+            pass
+        if attempt < retries:
+            await asyncio.sleep(AUTOPLAY_RETRY_DELAY)
+    return []
 
 
 class YouTubeAPI:
@@ -450,13 +459,11 @@ class YouTubeAPI:
             return 0
 
     def valid(self, link: str) -> bool:
-        """Return whether a URL points to YouTube media."""
         parsed = urlparse(str(link or "").strip())
         host = (parsed.hostname or "").lower()
         return host == "youtu.be" or host.endswith("youtube.com")
 
     def invalid(self, link: str) -> bool:
-        """Return whether a supplied URL is malformed or not HTTP(S)."""
         parsed = urlparse(str(link or "").strip())
         return parsed.scheme not in {"http", "https"} or not parsed.netloc
 
@@ -471,6 +478,9 @@ class YouTubeAPI:
         thumbnail = thumbnails[-1].get("url", "") if thumbnails else ""
         duration = result.get("duration") or "0:00"
         video_id = result.get("id")
+        view_count = result.get("viewCount")
+        if isinstance(view_count, dict):
+            view_count = view_count.get("short")
         return Track(
             id=video_id,
             channel_name=channel,
@@ -480,9 +490,7 @@ class YouTubeAPI:
             url=result.get("link") or f"https://www.youtube.com/watch?v={video_id}",
             message_id=message_id,
             thumbnail=thumbnail.split("?")[0],
-            view_count=(result.get("viewCount") or {}).get("short")
-            if isinstance(result.get("viewCount"), dict)
-            else result.get("viewCount"),
+            view_count=view_count,
             video=video,
         )
 
@@ -491,8 +499,7 @@ class YouTubeAPI:
         if not isinstance(query, str) or not query.strip():
             return None
         try:
-            results = await VideosSearch(query.strip(), limit=1).next()
-            matches = (results or {}).get("result") or []
+            matches = await _search(query.strip(), 1)
         except Exception:
             matches = []
         if not matches:
@@ -520,12 +527,14 @@ class YouTubeAPI:
         except Exception:
             return []
 
+    async def autoplay(self, video_id: str, seed_id: str = None) -> list:
+        """Related tracks (YouTube Music radio) for autoplay."""
+        return await get_autoplay(video_id, seed_id=seed_id)
+
     async def direct_stream(self, video_id: str) -> str:
-        """Download the audio file expected by the project's player."""
         return await download_song(video_id)
 
     async def probe_duration(self, file_path: str) -> int:
-        """Keep the playback adapter compatible when duration is unavailable."""
         return 0
 
     async def has_media_stream(self, file_path: str, video: bool = False) -> bool:
@@ -537,10 +546,7 @@ class YouTubeAPI:
 
     def invalidate_media(self, file_path: str | None) -> None:
         if file_path and os.path.isfile(file_path):
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
+            _remove_file(file_path)
 
     def schedule_delete(
         self, file_path: str | None, delay: int = MEDIA_RETENTION_SECONDS
@@ -549,6 +555,9 @@ class YouTubeAPI:
         if not file_path or (
             isinstance(file_path, str) and file_path.startswith(("http://", "https://"))
         ):
+            return
+        # Never delete files from the user's external download folders.
+        if is_external_path(file_path):
             return
 
         previous = self._cleanup_tasks.pop(file_path, None)
@@ -573,7 +582,6 @@ class YouTubeAPI:
         )
 
     async def save_cookies(self, urls: list[str]) -> None:
-        """The attached downloader does not require cookies."""
         return None
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
@@ -602,13 +610,12 @@ class YouTubeAPI:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            title = result["title"]
-            duration_min = result["duration"]
-            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
-            vidid = result["id"]
-            duration_sec = int(time_to_seconds(duration_min)) if duration_min else 0
+        result = (await _search(link, 1))[0]
+        title = result["title"]
+        duration_min = result["duration"]
+        thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+        vidid = result["id"]
+        duration_sec = int(time_to_seconds(duration_min)) if duration_min else 0
         return title, duration_min, duration_sec, thumbnail, vidid
 
     async def title(self, link: str, videoid: Union[bool, str] = None):
@@ -616,27 +623,22 @@ class YouTubeAPI:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            return result["title"]
+        return (await _search(link, 1))[0]["title"]
 
     async def duration(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            return result["duration"]
+        return (await _search(link, 1))[0]["duration"]
 
     async def thumbnail(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            return result["thumbnails"][0]["url"].split("?")[0]
+        result = (await _search(link, 1))[0]
+        return result["thumbnails"][0]["url"].split("?")[0]
 
     async def video(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -663,9 +665,8 @@ class YouTubeAPI:
         else:
             project_user = None
             project_video = False
-        if videoid:
-            if not project_call:
-                link = self.listbase + link
+        if videoid and not project_call:
+            link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
         try:
@@ -684,11 +685,7 @@ class YouTubeAPI:
             if not project_call:
                 ids.append(vid)
                 continue
-            track = self._result_track(
-                data,
-                message_id=0,
-                video=project_video,
-            )
+            track = self._result_track(data, message_id=0, video=project_video)
             track.user = project_user
             tracks.append(track)
         return tracks if project_call else ids
@@ -698,21 +695,15 @@ class YouTubeAPI:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            title = result["title"]
-            duration_min = result["duration"]
-            vidid = result["id"]
-            yturl = result["link"]
-            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+        result = (await _search(link, 1))[0]
         track_details = {
-            "title": title,
-            "link": yturl,
-            "vidid": vidid,
-            "duration_min": duration_min,
-            "thumb": thumbnail,
+            "title": result["title"],
+            "link": result["link"],
+            "vidid": result["id"],
+            "duration_min": result["duration"],
+            "thumb": result["thumbnails"][0]["url"].split("?")[0],
         }
-        return track_details, vidid
+        return track_details, result["id"]
 
     async def formats(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -748,8 +739,8 @@ class YouTubeAPI:
             link = self.base + link
         if "&" in link:
             link = link.split("&")[0]
-        a = VideosSearch(link, limit=10)
-        result = (await a.next()).get("result")
+        result = await _search(link, 10)
+        query_type = max(0, min(query_type, len(result) - 1))
         title = result[query_type]["title"]
         duration_min = result[query_type]["duration"]
         vidid = result[query_type]["id"]
@@ -775,9 +766,7 @@ class YouTubeAPI:
                 downloaded_file = await download_video(link)
             else:
                 downloaded_file = await download_song(link)
-            if downloaded_file:
-                return downloaded_file
-            return None
+            return downloaded_file or None
         except Exception:
             return None
 
@@ -791,7 +780,6 @@ class YouTubeAPI:
         self._cleanup_tasks.clear()
 
 
-# The main project creates this provider with ``YouTube()`` in zefron/__init__.py.
-# Export the class here instead of an already-created instance so both module
-# loading and the project's existing initialization path remain compatible.
+# The main project creates this provider with ``YouTube()`` in zefron/__init__.py,
+# so the class (not an instance) is exported here.
 YouTube = YouTubeAPI
